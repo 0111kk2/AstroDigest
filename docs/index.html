@@ -6,7 +6,10 @@
 <title>Astro Daily Digest</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.0/marked.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js"></script>
 <style>
   :root{
     --bg:#101426;          /* 深宇宙の紺 */
@@ -83,6 +86,8 @@
   .body ul{margin:4px 0;padding-left:18px}
   .body li{margin:2px 0}
   .body strong{color:var(--gold);font-weight:700}
+  .body .katex{color:var(--ink);font-size:1em}
+  .body .katex-display{overflow-x:auto;overflow-y:hidden;padding:4px 0}
   .body hr{border:none;border-top:1px dashed var(--line);margin:18px 0}
   .body details{
     background:var(--surface-2);border-radius:8px;margin:8px 0 14px;
@@ -157,6 +162,28 @@ function clearFeed(){
   return feed;
 }
 
+function renderMath(root){
+  if(!window.renderMathInElement) return;
+  renderMathInElement(root, {
+    delimiters: [
+      {left: '$$', right: '$$', display: true},
+      {left: '\\[', right: '\\]', display: true},
+      {left: '$', right: '$', display: false},
+      {left: '\\(', right: '\\)', display: false}
+    ],
+    ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code'],
+    throwOnError: false
+  });
+}
+
+function renderMarkdown(md){
+  const body = document.createElement('div');
+  body.className = 'body';
+  body.innerHTML = marked.parse(md);
+  renderMath(body);
+  return body;
+}
+
 async function renderDaily(){
   cursor = 0;
   clearFeed();
@@ -172,8 +199,8 @@ async function loadMore(){
       const md = await fetchDigest(d);
       const art = document.createElement('article');
       art.className = 'day';
-      art.innerHTML = `<div class="stamp"><span class="date">${d}</span></div>
-                       <div class="body">${marked.parse(md)}</div>`;
+      art.innerHTML = `<div class="stamp"><span class="date">${d}</span></div>`;
+      art.appendChild(renderMarkdown(md));
       feed.appendChild(art);
     }catch(e){ /* 個別の欠損はスキップ */ }
   }
@@ -201,7 +228,8 @@ async function renderWeek(){
       const md = await fetchDigest(d);
       const section = document.createElement('section');
       section.className = 'week-section';
-      section.innerHTML = `<div class="week-date">${d}</div>${marked.parse(md)}`;
+      section.innerHTML = `<div class="week-date">${d}</div>`;
+      section.appendChild(renderMarkdown(md));
       body.appendChild(section);
     }catch(e){ /* 個別の欠損はスキップ */ }
   }
