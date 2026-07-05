@@ -539,6 +539,14 @@ function acquiredSortValue(value, articleDate){
   return Date.UTC(year, Number(m) - 1, Number(d), Number(hh), Number(mm));
 }
 
+function itemDedupeKey(item){
+  const sourceLink = item.querySelector('.source-line a, p a');
+  if(sourceLink && sourceLink.href) return `${item.dataset.category}:url:${sourceLink.href}`;
+  const heading = item.querySelector('h3');
+  if(heading) return `${item.dataset.category}:title:${heading.textContent.trim().toLowerCase()}`;
+  return `${item.dataset.category}:text:${item.textContent.trim().slice(0, 120).toLowerCase()}`;
+}
+
 function buildArticleTimeline(article, allowed){
   const source = article.querySelector('.body');
   if(!source) return false;
@@ -552,8 +560,15 @@ function buildArticleTimeline(article, allowed){
   }
   timeline.innerHTML = '';
 
+  const seenItems = new Set();
   const items = [...source.querySelectorAll('.digest-item')]
     .filter(item => allowed.includes(item.dataset.category))
+    .filter(item => {
+      const key = itemDedupeKey(item);
+      if(seenItems.has(key)) return false;
+      seenItems.add(key);
+      return true;
+    })
     .map((item, order) => ({
       item,
       order,

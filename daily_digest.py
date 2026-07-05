@@ -327,7 +327,7 @@ def fetch_atel_body(url):
     return body[:ATEL_BODY_TRUNCATE].strip()
 
 
-def fetch_atels(start, end):
+def fetch_atels(start, end, exclude_ids=None):
     """ATel トップページの新着表から [start, end) の Telegram を取得する。"""
     page = http_get(f"{ATEL_BASE}/", timeout=90).decode("utf-8", "replace")
 
@@ -355,6 +355,8 @@ def fetch_atels(start, end):
             continue
         if posted < start:
             break
+        if exclude_ids and atel_id in exclude_ids:
+            continue
 
         url = href if href.startswith("http") else f"{ATEL_BASE}/{href.lstrip('/')}"
         atels.append({
@@ -1084,6 +1086,7 @@ def generate_digest(start, end, use_index_first=True):
     if INCLUDE_GCN:
         try:
             circulars = fetch_circulars(start, end, use_index_first=use_index_first)
+            circulars = [c for c in circulars if str(c["id"]) not in set(seen.get("gcn", []))]
             if circulars:
                 groups = group_by_event(circulars)
                 print(f"GCN: {len(circulars)} 報 / {len(groups)} イベントを要約中...")
@@ -1096,6 +1099,7 @@ def generate_digest(start, end, use_index_first=True):
                     f"## 🚨 新天体・トランジェント速報(GCN {len(circulars)}報 / {len(groups)}イベント)\n\n"
                     f"{gcn_summary}"
                 )
+                mark_seen(seen, "gcn", [str(c["id"]) for c in circulars])
             elif include_empty_notes:
                 parts.append("## 🚨 新天体・トランジェント速報\n\n対象期間の GCN Circular はありませんでした。")
         except Exception as e:
@@ -1120,13 +1124,14 @@ def generate_digest(start, end, use_index_first=True):
     # --- ATel 速報(失敗しても他のセクションは続行)---
     if INCLUDE_ATEL:
         try:
-            atels = fetch_atels(start, end)
+            atels = fetch_atels(start, end, exclude_ids=set(seen.get("atel", [])))
             if atels:
                 print(f"ATel: {len(atels)} 件を要約中...")
                 parts.append(
                     f"## 🛰️ ATel 新着速報({len(atels)}件)\n\n"
                     f"{summarize_atels(atels)}"
                 )
+                mark_seen(seen, "atel", [item["id"] for item in atels])
             elif include_empty_notes:
                 parts.append("## 🛰️ ATel 新着速報\n\n対象期間の ATel 投稿はありませんでした。")
         except Exception as e:
