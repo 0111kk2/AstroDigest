@@ -20,6 +20,7 @@ GitHub Issue(または Slack/Discord Webhook)に投稿するスクリプト。
 
 import json
 import io
+import csv
 import html
 import os
 import re
@@ -76,6 +77,25 @@ PRESS_KEYWORDS = [
     "ガンマ線", "宇宙線", "マイクロカロリメータ", "CCD", "検出器",
 ]
 
+# --- TNS / ミッション・観測所ニュース ---
+INCLUDE_TNS = True
+MAX_TNS = 8
+TNS_LOOKBACK_DAYS = 7
+INCLUDE_MISSION_NEWS = True
+MAX_MISSION_NEWS = 10
+MISSION_NEWS_LOOKBACK_DAYS = 14
+MISSION_NEWS_SOURCES = [
+    {"name": "NASA Science", "url": "https://science.nasa.gov/feed/", "type": "rss"},
+    {"name": "XRISM", "url": "https://www.xrism.jaxa.jp/en/topics/", "type": "html"},
+    {"name": "NuSTAR", "url": "https://www.nustar.caltech.edu/news", "type": "html"},
+    {"name": "Chandra", "url": "https://chandra.harvard.edu/press/", "type": "html"},
+]
+MISSION_KEYWORDS = [
+    "x-ray", "x ray", "gamma-ray", "gamma ray", "transient", "supernova", "black hole",
+    "neutron star", "pulsar", "magnetar", "grb", "swift", "nicer", "chandra", "nustar",
+    "xrism", "ixpe", "fermi", "maxi",
+]
+
 # --- 共通 ---
 HOURS_BACK = 26            # 何時間前までを対象にするか(毎日実行なら26hで取りこぼし防止)
 # 使用する AI: GEMINI_API_KEY があれば Gemini(無料枠)、
@@ -88,6 +108,7 @@ ARXIV_API = "http://export.arxiv.org/api/query"
 GCN_BASE = "https://gcn.nasa.gov"
 GCN_ARCHIVE = f"{GCN_BASE}/circulars/archive.json.tar.gz"
 ATEL_BASE = "https://www.astronomerstelegram.org"
+TNS_CSV = "https://www.wis-tns.org/search?format=csv&classified_sne=1"
 ADS_BASE = "https://ui.adsabs.harvard.edu"
 ATOM = "{http://www.w3.org/2005/Atom}"
 UA = {"User-Agent": "Mozilla/5.0 (compatible; AstroDigest/1.0; +https://github.com/)"}
@@ -436,6 +457,196 @@ def format_domestic_press(items):
     return "\n\n".join(blocks)
 
 
+# ---------------------------------------------------------------- TNS / mission news
+
+def parse_rfc2822_date(value):
+    from email.utils import parsedate_to_datetime
+    try:
+        dt = parsedate_to_datetime(value.strip())
+    except Exception:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def parse_url_date(url):
+    patterns = [
+        r"(?<!\d)(20\d{2})[/-](\d{1,2})[/-](\d{1,2})(?!\d)",
+        r"(?<!\d)(\d{2})(\d{2})(\d{2})(?!\d)",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, url)
+        if not match:
+            continue
+        parts = [int(x) for x in match.groups()]
+        if len(parts[0:1]) and parts[0] < 100:
+            y, m, d = 2000 + parts[0], parts[1], parts[2]
+        else:
+            y, m, d = parts
+        try:
+            return datetime(y, m, d, tzinfo=timezone.utc)
+        except ValueError:
+            continue
+    return None
+
+
+def keyword_score(text, keywords):
+    low = text.lower()
+    return sum(1 for kw in keywords if kw.lower() in low)
+
+
+def tns_object_url(name):
+    slug = re.sub(r"^(SN|AT)\s+", "", name or "", flags=re.I).replace(" ", "")
+    return f"https://www.wis-tns.org/object/{urllib.parse.quote(slug)}"
+
+
+def fetch_tns(start, end):
+    window_start = min(start, end - timedelta(days=TNS_LOOKBACK_DAYS))
+    data = http_get(TNS_CSV, timeout=90).decode("utf-8", "replace")
+    rows = csv.DictReader(io.StringIO(data))
+    items = []
+    for row in rows:
+        discovered = parse_press_date(row.get("Discovery Date (UT)", ""))
+        if discovered is None or discovered < window_start or discovered >= end:
+            continue
+        name = row.get("Name", "").strip()
+        if not name:
+            continue
+        obj_type = row.get("Obj. Type", "").strip() or "unclassified"
+        items.append({
+            "name": name,
+            "type": obj_type,
+            "ra": row.get("RA", "").strip(),
+            "dec": row.get("DEC", "").strip(),
+            "mag": row.get("Discovery Mag/Flux", "").strip(),
+            "filt": row.get("Discovery Filter", "").strip(),
+            "posted": discovered,
+            "source": row.get("Discovery Data Source/s", "").strip() or row.get("Reporting Group/s", "").strip(),
+            "url": tns_object_url(name),
+        })
+        if len(items) >= MAX_TNS:
+            break
+    items.sort(key=lambda item: item["posted"], reverse=True)
+    return items[:MAX_TNS]
+
+
+def format_tns(items):
+    blocks = []
+    for item in items:
+        meta = [item["type"]]
+        if item["mag"]:
+            meta.append(f"{item['mag']}{(' ' + item['filt']) if item['filt'] else ''}")
+        if item["source"]:
+            meta.append(item["source"])
+        coords = f"{item['ra']} {item['dec']}".strip()
+        blocks.append(
+            f"### {item['name']}\n"
+            f"原文: [TNS]({item['url']})\n"
+            f"- **日付**: {item['posted'].strftime('%Y-%m-%d')}\n"
+            f"- **種別**: {' / '.join(meta)}\n"
+            f"- **座標**: {coords or 'TNSを確認'}"
+        )
+    return "\n\n".join(blocks)
+
+
+def parse_rss_items(source, start, end):
+    window_start = min(start, end - timedelta(days=MISSION_NEWS_LOOKBACK_DAYS))
+    root = ET.fromstring(http_get(source["url"], timeout=90))
+    items = []
+    for item in root.findall(".//item"):
+        title = clean_html_text(item.findtext("title") or "")
+        link = item.findtext("link") or source["url"]
+        description = clean_html_text(item.findtext("description") or "")
+        posted = parse_rfc2822_date(item.findtext("pubDate") or "")
+        if posted is None or posted < window_start or posted >= end:
+            continue
+        if keyword_score(f"{title} {description}", MISSION_KEYWORDS) <= 0:
+            continue
+        items.append({
+            "source": source["name"],
+            "title": title,
+            "url": link,
+            "posted": posted,
+            "excerpt": description[:320],
+        })
+    return items
+
+
+def parse_html_news_items(source, start, end):
+    window_start = min(start, end - timedelta(days=MISSION_NEWS_LOOKBACK_DAYS))
+    page = http_get(source["url"], timeout=90).decode("utf-8", "replace")
+    page = re.sub(r"(?is)<script.*?</script>|<style.*?</style>", " ", page)
+    items = []
+    for match in re.finditer(r'<a\b[^>]*href=["\']([^"\']+)["\'][^>]*>(.*?)</a>', page, flags=re.S | re.I):
+        href, title_html = match.groups()
+        title = clean_html_text(title_html)
+        if len(title) < 10 or title.lower() in ("privacy policy", "image use policy"):
+            continue
+        url = absolute_url(source["url"], href)
+        context = clean_html_text(page[max(0, match.start() - 500):match.end() + 500])
+        posted = parse_press_date(context) or parse_url_date(url)
+        if posted is None or posted < window_start or posted >= end:
+            continue
+        if keyword_score(f"{title} {context} {url}", MISSION_KEYWORDS) <= 0:
+            continue
+        items.append({
+            "source": source["name"],
+            "title": title,
+            "url": url,
+            "posted": posted,
+            "excerpt": fetch_news_excerpt(url) or context[:320],
+        })
+    unique = {}
+    for item in items:
+        unique[item["url"]] = item
+    return list(unique.values())
+
+
+def fetch_news_excerpt(url):
+    try:
+        page = http_get(url, timeout=60).decode("utf-8", "replace")
+    except Exception as e:
+        print(f"  skip news excerpt {url}: {e}")
+        return ""
+    page = re.sub(r"(?is)<script.*?</script>|<style.*?</style>|<nav.*?</nav>|<header.*?</header>|<footer.*?</footer>", " ", page)
+    meta = re.search(r'<meta[^>]+(?:name|property)=["\'](?:description|og:description)["\'][^>]+content=["\']([^"\']+)["\']', page, flags=re.I)
+    if meta:
+        return clean_html_text(meta.group(1))[:320]
+    paragraphs = re.findall(r"<p\b[^>]*>(.*?)</p>", page, flags=re.S | re.I)
+    for paragraph in paragraphs:
+        text = clean_html_text(paragraph)
+        if len(text) >= 80:
+            return text[:320]
+    return ""
+
+
+def fetch_mission_news(start, end):
+    items = []
+    for source in MISSION_NEWS_SOURCES:
+        try:
+            if source.get("type") == "rss":
+                items.extend(parse_rss_items(source, start, end))
+            else:
+                items.extend(parse_html_news_items(source, start, end))
+        except Exception as e:
+            print(f"  skip mission news source {source['name']}: {e}")
+    items.sort(key=lambda item: (keyword_score(f"{item['title']} {item['excerpt']}", MISSION_KEYWORDS), item["posted"]), reverse=True)
+    return items[:MAX_MISSION_NEWS]
+
+
+def format_mission_news(items):
+    blocks = []
+    for item in items:
+        blocks.append(
+            f"### {item['title']}\n"
+            f"原文: [{item['source']}]({item['url']})\n"
+            f"- **日付**: {item['posted'].strftime('%Y-%m-%d')}\n"
+            f"- **抜粋**: {item['excerpt'] or '原文ページを確認してください。'}"
+        )
+    return "\n\n".join(blocks)
+
+
 def group_by_event(circulars):
     groups = defaultdict(list)
     for c in circulars:
@@ -698,7 +909,26 @@ def generate_digest(start, end, use_index_first=True):
                 parts.append("## 🚨 新天体・トランジェント速報\n\n対象期間の GCN Circular はありませんでした。")
         except Exception as e:
             print(f"GCN セクションの生成に失敗: {e}")
-            parts.append(f"## 🚨 新天体・トランジェント速報\n\n取得エラーのためスキップしました({e})")
+            if "429" in str(e) or "Too Many Requests" in str(e):
+                parts.append("## 🚨 新天体・トランジェント速報\n\nGCN はNASA側のレート制限中のため、この回は未掲載です。TNS / ATel を優先して確認してください。")
+            else:
+                parts.append(f"## 🚨 新天体・トランジェント速報\n\n取得制限のため、この回は未掲載です。")
+
+    # --- TNS 新規天体(失敗しても論文セクションは続行)---
+    if INCLUDE_TNS:
+        try:
+            tns_items = fetch_tns(start, end)
+            if tns_items:
+                print(f"TNS: {len(tns_items)} 件を掲載")
+                parts.append(
+                    f"## 🔭 TNS 新規・分類天体({len(tns_items)}件)\n\n"
+                    f"{format_tns(tns_items)}"
+                )
+            else:
+                parts.append("## 🔭 TNS 新規・分類天体\n\n直近の関連天体は見つかりませんでした。")
+        except Exception as e:
+            print(f"TNS セクションの生成に失敗: {e}")
+            parts.append("## 🔭 TNS 新規・分類天体\n\n取得制限のため、この回は未掲載です。")
 
     # --- ATel 速報(失敗しても論文セクションは続行)---
     if INCLUDE_ATEL:
@@ -715,6 +945,22 @@ def generate_digest(start, end, use_index_first=True):
         except Exception as e:
             print(f"ATel セクションの生成に失敗: {e}")
             parts.append(f"## 🛰️ ATel 新着速報\n\n取得エラーのためスキップしました({e})")
+
+    # --- ミッション/観測所ニュース(失敗しても論文セクションは続行)---
+    if INCLUDE_MISSION_NEWS:
+        try:
+            mission_items = fetch_mission_news(start, end)
+            if mission_items:
+                print(f"ミッション/観測所ニュース: {len(mission_items)} 件を掲載")
+                parts.append(
+                    f"## 🛰️ ミッション・観測所ニュース({len(mission_items)}件)\n\n"
+                    f"{format_mission_news(mission_items)}"
+                )
+            else:
+                parts.append("## 🛰️ ミッション・観測所ニュース\n\n直近の関連ニュースは見つかりませんでした。")
+        except Exception as e:
+            print(f"ミッション/観測所ニュースセクションの生成に失敗: {e}")
+            parts.append("## 🛰️ ミッション・観測所ニュース\n\n取得制限のため、この回は未掲載です。")
 
     # --- 国内プレスリリース(失敗しても論文セクションは続行)---
     if INCLUDE_DOMESTIC_PRESS:
