@@ -70,7 +70,7 @@ def http_get(url, timeout=60):
 
 # ---------------------------------------------------------------- arXiv
 
-def fetch_recent_papers(hours_back=HOURS_BACK):
+def fetch_recent_papers(hours_back=HOURS_BACK, max_papers=MAX_PAPERS):
     query = " OR ".join(f"cat:{c}" for c in CATEGORIES)
     params = urllib.parse.urlencode({
         "search_query": query,
@@ -102,7 +102,7 @@ def fetch_recent_papers(hours_back=HOURS_BACK):
             return sum(1 for kw in KEYWORDS if kw.lower() in text)
         papers.sort(key=score, reverse=True)
 
-    return papers[:MAX_PAPERS]
+    return papers[:max_papers]
 
 
 # ---------------------------------------------------------------- GCN
@@ -270,8 +270,8 @@ def summarize_papers(papers):
         data = json.loads(re.sub(r"```(?:json)?|```", "", raw).strip())
         by_n = {item["n"]: item for item in data["papers"]}
     except Exception as e:
-        print(f"JSON パース失敗、生テキストで出力します: {e}")
-        return raw  # フォールバック: AIの出力をそのまま使う
+        print(f"JSON パース失敗、簡易一覧で出力します: {e}")
+        return format_paper_fallback(papers)
 
     blocks = []
     for i, p in enumerate(papers):
@@ -286,6 +286,19 @@ def summarize_papers(papers):
         )
     if data.get("highlight"):
         blocks.append(f"**🌟 {data['highlight']}**")
+    return "\n\n".join(blocks)
+
+
+def format_paper_fallback(papers):
+    blocks = []
+    for i, p in enumerate(papers):
+        blocks.append(
+            f"### {i+1}. [{p['title']}]({p['url']})\n"
+            f"- **著者**: {', '.join(p['authors'][:6])}{' ほか' if len(p['authors']) > 6 else ''}\n"
+            f"- **カテゴリ**: {', '.join(p['categories'])}\n"
+            f"<details><summary>アブストラクト(原文)</summary>\n\n"
+            f"{p['abstract']}\n\n</details>"
+        )
     return "\n\n".join(blocks)
 
 
@@ -395,7 +408,7 @@ def main():
     papers = fetch_recent_papers()
     paper_window = "直近24時間"
     if not papers:
-        papers = fetch_recent_papers(hours_back=24 * 7)
+        papers = fetch_recent_papers(hours_back=24 * 7, max_papers=min(MAX_PAPERS, 8))
         paper_window = "直近1週間"
     if papers:
         print(f"arXiv: {len(papers)} 件の論文を要約中...")
