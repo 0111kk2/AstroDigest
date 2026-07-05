@@ -27,6 +27,7 @@ import sys
 import tarfile
 import time
 import urllib.parse
+import urllib.error
 import urllib.request
 import xml.etree.ElementTree as ET
 from collections import defaultdict
@@ -335,8 +336,17 @@ def _call_gemini(prompt, max_tokens):
     req = urllib.request.Request(
         url, data=body, headers={"Content-Type": "application/json"}
     )
-    with urllib.request.urlopen(req, timeout=300) as res:
-        data = json.loads(res.read())
+    for attempt in range(3):
+        try:
+            with urllib.request.urlopen(req, timeout=300) as res:
+                data = json.loads(res.read())
+            break
+        except urllib.error.HTTPError as e:
+            if e.code not in (429, 500, 502, 503, 504) or attempt == 2:
+                raise
+            wait = 25 * (attempt + 1)
+            print(f"Gemini API が混雑しています({e.code})。{wait}秒待って再試行します...")
+            time.sleep(wait)
     parts = data["candidates"][0]["content"]["parts"]
     return "".join(p.get("text", "") for p in parts)
 
@@ -577,10 +587,15 @@ def generate_digest(start, end, use_index_first=True):
         paper_window = "直近1週間"
     if papers:
         print(f"arXiv: {len(papers)} 件の論文を要約中...")
+        try:
+            paper_summary = summarize_papers(papers)
+        except Exception as e:
+            print(f"arXiv 要約に失敗、フォールバック表示にします: {e}")
+            paper_summary = format_paper_fallback(papers)
         parts.append(
             f"## 📄 arXiv 新着論文({paper_window} / {len(papers)}件)\n\n"
             f"対象カテゴリ: {', '.join(CATEGORIES)}\n\n"
-            + summarize_papers(papers)
+            + paper_summary
         )
     else:
         parts.append("## 📄 arXiv 新着論文\n\n直近1週間の新着はありませんでした。")
