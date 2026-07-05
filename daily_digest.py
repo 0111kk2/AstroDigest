@@ -88,6 +88,7 @@ ARXIV_API = "http://export.arxiv.org/api/query"
 GCN_BASE = "https://gcn.nasa.gov"
 GCN_ARCHIVE = f"{GCN_BASE}/circulars/archive.json.tar.gz"
 ATEL_BASE = "https://www.astronomerstelegram.org"
+ADS_BASE = "https://ui.adsabs.harvard.edu"
 ATOM = "{http://www.w3.org/2005/Atom}"
 UA = {"User-Agent": "Mozilla/5.0 (compatible; AstroDigest/1.0; +https://github.com/)"}
 
@@ -118,6 +119,7 @@ def fetch_papers(start, end, max_papers=MAX_PAPERS):
             "title": " ".join(entry.findtext(f"{ATOM}title").split()),
             "abstract": " ".join(entry.findtext(f"{ATOM}summary").split()),
             "url": entry.findtext(f"{ATOM}id"),
+            "ads_url": ads_search_url(entry.findtext(f"{ATOM}id")),
             "authors": [a.findtext(f"{ATOM}name") for a in entry.findall(f"{ATOM}author")],
             "categories": [c.get("term") for c in entry.findall(f"{ATOM}category")],
         })
@@ -129,6 +131,21 @@ def fetch_papers(start, end, max_papers=MAX_PAPERS):
         papers.sort(key=score, reverse=True)
 
     return papers[:max_papers]
+
+
+def arxiv_id(url):
+    match = re.search(r"arxiv\.org/abs/([^?#]+)", url or "", flags=re.I)
+    if not match:
+        return ""
+    return re.sub(r"v\d+$", "", match.group(1))
+
+
+def ads_search_url(arxiv_url):
+    aid = arxiv_id(arxiv_url)
+    if not aid:
+        return ADS_BASE
+    query = urllib.parse.quote(f"arXiv:{aid}")
+    return f"{ADS_BASE}/search/q={query}&sort=date%20desc"
 
 
 # ---------------------------------------------------------------- GCN
@@ -364,12 +381,34 @@ def fetch_press_source(source, start, end):
         }
         if press_title_score(item) <= 0:
             continue
+        item["excerpt"] = fetch_press_excerpt(item["url"], item["title"]) or item["excerpt"]
         items.append(item)
 
     unique = {}
     for item in items:
         unique[item["url"]] = item
     return list(unique.values())
+
+
+def fetch_press_excerpt(url, title):
+    try:
+        page = http_get(url, timeout=60).decode("utf-8", "replace")
+    except Exception as e:
+        print(f"  skip press excerpt {url}: {e}")
+        return ""
+    page = re.sub(r"(?is)<script.*?</script>|<style.*?</style>|<nav.*?</nav>|<header.*?</header>|<footer.*?</footer>", " ", page)
+    text = clean_html_text(page)
+    start = -1
+    for marker in ("発表のポイント", "ポイント", "概要", title):
+        start = text.find(marker)
+        if start >= 0:
+            break
+    if start < 0:
+        return ""
+    excerpt = text[start:]
+    excerpt = re.sub(r"^発表のポイント\s*", "", excerpt)
+    excerpt = re.sub(r"^ポイント\s*", "", excerpt)
+    return excerpt[:360].strip()
 
 
 def fetch_domestic_press(start, end):
@@ -486,28 +525,19 @@ def _call_claude(prompt, max_tokens):
 
 def summarize_papers(papers):
     paper_text = "\n\n".join(
-        f"[{i+1}] タイトル: {p['title']}\nURL: {p['url']}\nアブストラクト: {p['abstract']}"
+        f"[{i+1}] タイトル: {p['title']}\nURL: {p['url']}\nADS: {p['ads_url']}\nアブストラクト: {p['abstract']}"
         for i, p in enumerate(papers)
     )
     prompt = (
         "以下は対象期間中に arXiv に投稿された論文の一覧です。"
-        "各論文のアブストラクトを読み、日本語Markdownで構造化してください。\n\n"
+        "各論文のアブストラクトを、要約ではなく自然な日本語に和訳してください。\n\n"
         "出力形式を厳守してください。前置きや ``` は不要です。\n"
-        "最初に必ず今日のハイライトを書き、その後に各論文を書いてください。"
-        "通常表示はタイトル、元論文リンク、日本語アブストラクトだけにしてください。"
-        "目的・方法・結果・意義などの章別説明は必ず details 内に入れ、通常表示には出さないでください。\n\n"
-        "**🌟 今日のハイライト**\n\n"
-        "特に注目すべき論文1〜2本とその理由を2〜3文で書く。\n\n"
+        "各論文はタイトル、元論文リンク、アブストラクト和訳だけにしてください。"
+        "ハイライト、目的、方法、結果、意義、結論、章別説明、details は出さないでください。\n\n"
         "### 1. 論文タイトル\n"
-        "元論文: [arXiv](URL)\n"
-        "- **アブストラクト**: アブストラクト全体の日本語要約(3〜4文)\n"
-        "<details>\n"
-        "<summary>章別の和訳を表示</summary>\n\n"
-        "- **目的**: 目的(1文)\n"
-        "- **方法・データ**: どんなデータ・手法で何を議論しているか(1〜2文)\n"
-        "- **主な結果**: 何が分かったか(1〜2文)\n"
-        "- **意義**: 何が重要か(1文)\n\n"
-        "</details>\n\n"
+        "元論文: [arXiv](URL) / [ADS](ADS_URL)\n"
+        "- **アブストラクト和訳**: アブストラクト全文の日本語訳\n"
+        "\n"
         "この形式で全論文を番号順に出してください。\n"
         "専門用語は無理に訳さず残してください(例: QPO、ハードステート)。"
         "アブストラクトに書かれていないことは推測で補わないでください。\n\n"
@@ -535,13 +565,8 @@ def format_paper_fallback(papers):
     for i, p in enumerate(papers):
         blocks.append(
             f"### {i+1}. {p['title']}\n"
-            f"元論文: [arXiv]({p['url']})\n"
-            f"- **著者**: {', '.join(p['authors'][:6])}{' ほか' if len(p['authors']) > 6 else ''}\n"
-            f"- **カテゴリ**: {', '.join(p['categories'])}\n"
-            f"- **アブストラクト**: 自動要約に失敗したため、arXivリンク先を確認してください。\n"
-            f"<details>\n<summary>章別の和訳を表示</summary>\n\n"
-            f"自動要約に失敗したため、章別の和訳は生成できませんでした。\n\n"
-            f"</details>"
+            f"元論文: [arXiv]({p['url']}) / [ADS]({p['ads_url']})\n"
+            f"- **アブストラクト和訳**: 自動和訳に失敗したため、arXivリンク先を確認してください。"
         )
     return "\n\n".join(blocks)
 
@@ -707,26 +732,30 @@ def generate_digest(start, end, use_index_first=True):
             print(f"国内プレスセクションの生成に失敗: {e}")
             parts.append(f"## 🇯🇵 国内X線天文・関連プレス\n\n取得エラーのためスキップしました({e})")
 
-    # --- arXiv 論文 ---
-    papers = fetch_papers(start, end)
-    paper_window = "対象期間"
-    if not papers:
-        papers = fetch_papers(end - timedelta(days=7), end, max_papers=min(MAX_PAPERS, 8))
-        paper_window = "直近1週間"
-    if papers:
-        print(f"arXiv: {len(papers)} 件の論文を要約中...")
-        try:
-            paper_summary = summarize_papers(papers)
-        except Exception as e:
-            print(f"arXiv 要約に失敗、フォールバック表示にします: {e}")
-            paper_summary = format_paper_fallback(papers)
-        parts.append(
-            f"## 📄 arXiv 新着論文({paper_window} / {len(papers)}件)\n\n"
-            f"対象カテゴリ: {', '.join(CATEGORIES)}\n\n"
-            + paper_summary
-        )
-    else:
-        parts.append("## 📄 arXiv 新着論文\n\n直近1週間の新着はありませんでした。")
+    # --- arXiv 論文(失敗してもサイト保存は続行)---
+    try:
+        papers = fetch_papers(start, end)
+        paper_window = "対象期間"
+        if not papers:
+            papers = fetch_papers(end - timedelta(days=7), end, max_papers=min(MAX_PAPERS, 8))
+            paper_window = "直近1週間"
+        if papers:
+            print(f"arXiv: {len(papers)} 件の論文を要約中...")
+            try:
+                paper_summary = summarize_papers(papers)
+            except Exception as e:
+                print(f"arXiv 要約に失敗、フォールバック表示にします: {e}")
+                paper_summary = format_paper_fallback(papers)
+            parts.append(
+                f"## 📄 arXiv 新着論文({paper_window} / {len(papers)}件)\n\n"
+                f"対象カテゴリ: {', '.join(CATEGORIES)}\n\n"
+                + paper_summary
+            )
+        else:
+            parts.append("## 📄 arXiv 新着論文\n\n直近1週間の新着はありませんでした。")
+    except Exception as e:
+        print(f"arXiv セクションの生成に失敗: {e}")
+        parts.append(f"## 📄 arXiv 新着論文\n\n取得エラーのためスキップしました({e})")
 
     return "\n\n---\n\n".join(parts)
 
