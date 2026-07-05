@@ -45,8 +45,19 @@
   }
   @media(min-width:672px){.calendar{margin-left:auto;margin-right:auto;max-width:640px}}
   .calendar-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px}
-  .calendar-title{font-family:"IBM Plex Mono",monospace;font-size:13px;color:var(--gold)}
+  .calendar-toggle{
+    border:1px solid var(--gold);background:rgba(245,184,65,.08);color:var(--gold);
+    border-radius:6px;min-height:32px;padding:0 10px;cursor:pointer;
+    font-family:"IBM Plex Mono",monospace;font-size:13px;
+  }
+  .calendar-toggle::after{content:"−";margin-left:8px;color:var(--ink-dim)}
+  .calendar.is-collapsed .calendar-toggle::after{content:"+"}
+  .calendar-title{font-family:"IBM Plex Mono",monospace;font-size:13px;color:var(--ink-dim)}
   .calendar-controls{display:flex;align-items:center;gap:6px}
+  @media(max-width:420px){
+    .calendar-head{align-items:flex-start;flex-direction:column}
+    .calendar-controls{width:100%;justify-content:space-between}
+  }
   .calendar button{
     border:1px solid var(--line);background:var(--surface-2);color:var(--ink);
     border-radius:6px;min-height:32px;cursor:pointer;
@@ -72,6 +83,8 @@
     color:var(--gold);background:rgba(245,184,65,.14);border-color:var(--gold);
   }
   .calendar-day:disabled{cursor:default;opacity:.42}
+  .calendar.is-collapsed .calendar-body{display:none}
+  .calendar.is-collapsed .calendar-head{margin-bottom:0}
   article.day{
     background:var(--surface);border:1px solid var(--line);border-radius:14px;
     padding:18px 18px 8px;margin:0 16px 22px;
@@ -194,17 +207,20 @@
 <main class="wrap">
   <section class="calendar" aria-label="アーカイブカレンダー">
     <div class="calendar-head">
-      <div class="calendar-title" id="calendarTitle">ARCHIVE</div>
+      <button class="calendar-toggle" id="calendarToggle" type="button" aria-expanded="true">ARCHIVE</button>
       <div class="calendar-controls">
+        <span class="calendar-title" id="calendarTitle">ARCHIVE</span>
         <button class="calendar-nav" id="prevMonth" type="button" aria-label="前の月">‹</button>
         <button class="calendar-nav" id="nextMonth" type="button" aria-label="次の月">›</button>
         <button class="calendar-all" id="showAll" type="button">全期間</button>
       </div>
     </div>
-    <div class="calendar-weekdays" aria-hidden="true">
-      <span>Sun</span><span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span>
+    <div class="calendar-body" id="calendarBody">
+      <div class="calendar-weekdays" aria-hidden="true">
+        <span>Sun</span><span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span>
+      </div>
+      <div class="calendar-grid" id="calendarGrid"></div>
     </div>
-    <div class="calendar-grid" id="calendarGrid"></div>
   </section>
   <section id="feed" aria-live="polite">
     <p class="note" id="status">読み込み中…</p>
@@ -449,6 +465,11 @@ document.getElementById('nextMonth').addEventListener('click', () => {
   renderCalendar();
 });
 document.getElementById('showAll').addEventListener('click', renderDaily);
+document.getElementById('calendarToggle').addEventListener('click', () => {
+  const calendar = document.querySelector('.calendar');
+  const collapsed = calendar.classList.toggle('is-collapsed');
+  document.getElementById('calendarToggle').setAttribute('aria-expanded', String(!collapsed));
+});
 </script>
 </body>
 </html>
