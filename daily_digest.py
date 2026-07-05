@@ -1061,10 +1061,10 @@ def generate_digest(start, end, use_index_first=True):
     """[start, end) の期間を対象にダイジェスト本文(Markdown)を1件分生成する。
 
     include_empty_notes が False の場合(短い時間窓 = 1時間おきの通常実行を想定)、
-    「新着なし」のプレースホルダーは出さずセクション自体を省略する。エラー表示は
-    頻度が低く実行上有用な情報なので、この場合も出す。
-    全セクションが空(新着もエラーもない)場合は None を返し、呼び出し側で
-    ファイル更新や通知をスキップできるようにする。
+    「新着なし」やエラーのプレースホルダーは出さずセクション自体を省略する
+    (コンソールログには出すが、フィードには本当に新着があった時しか書かない)。
+    全セクションが空(新着なし)場合は None を返し、呼び出し側でファイル更新や
+    通知をスキップできるようにする。
     """
     include_empty_notes = (end - start) >= timedelta(hours=12)
     seen = load_seen()
@@ -1090,10 +1090,11 @@ def generate_digest(start, end, use_index_first=True):
                 parts.append("## 🚨 新天体・トランジェント速報\n\n対象期間の GCN Circular はありませんでした。")
         except Exception as e:
             print(f"GCN セクションの生成に失敗: {e}")
-            if "429" in str(e) or "Too Many Requests" in str(e):
-                parts.append("## 🚨 新天体・トランジェント速報\n\nGCN はNASA側のレート制限中のため、この回は未掲載です。TNS / ATel を優先して確認してください。")
-            else:
-                parts.append(f"## 🚨 新天体・トランジェント速報\n\n取得制限のため、この回は未掲載です。")
+            if include_empty_notes:
+                if "429" in str(e) or "Too Many Requests" in str(e):
+                    parts.append("## 🚨 新天体・トランジェント速報\n\nGCN はNASA側のレート制限中のため、この回は未掲載です。TNS / ATel を優先して確認してください。")
+                else:
+                    parts.append("## 🚨 新天体・トランジェント速報\n\n取得制限のため、この回は未掲載です。")
 
     # --- TNS 新規天体(失敗しても他のセクションは続行)---
     if INCLUDE_TNS:
@@ -1110,7 +1111,8 @@ def generate_digest(start, end, use_index_first=True):
                 parts.append("## 🔭 TNS 新規・分類天体\n\n直近の関連天体は見つかりませんでした。")
         except Exception as e:
             print(f"TNS セクションの生成に失敗: {e}")
-            parts.append("## 🔭 TNS 新規・分類天体\n\n取得制限のため、この回は未掲載です。")
+            if include_empty_notes:
+                parts.append("## 🔭 TNS 新規・分類天体\n\n取得制限のため、この回は未掲載です。")
 
     # --- ATel 速報(失敗しても他のセクションは続行)---
     if INCLUDE_ATEL:
@@ -1126,7 +1128,8 @@ def generate_digest(start, end, use_index_first=True):
                 parts.append("## 🛰️ ATel 新着速報\n\n対象期間の ATel 投稿はありませんでした。")
         except Exception as e:
             print(f"ATel セクションの生成に失敗: {e}")
-            parts.append(f"## 🛰️ ATel 新着速報\n\n取得エラーのためスキップしました({e})")
+            if include_empty_notes:
+                parts.append(f"## 🛰️ ATel 新着速報\n\n取得エラーのためスキップしました({e})")
 
     # --- ミッション/観測所ニュース(失敗しても他のセクションは続行)---
     if INCLUDE_MISSION_NEWS:
@@ -1148,7 +1151,8 @@ def generate_digest(start, end, use_index_first=True):
                 parts.append("## 🛰️ ミッション・観測所ニュース\n\n直近の関連ニュースは見つかりませんでした。")
         except Exception as e:
             print(f"ミッション/観測所ニュースセクションの生成に失敗: {e}")
-            parts.append("## 🛰️ ミッション・観測所ニュース\n\n取得制限のため、この回は未掲載です。")
+            if include_empty_notes:
+                parts.append("## 🛰️ ミッション・観測所ニュース\n\n取得制限のため、この回は未掲載です。")
 
     # --- 国内プレスリリース(失敗しても他のセクションは続行)---
     if INCLUDE_DOMESTIC_PRESS:
@@ -1165,18 +1169,25 @@ def generate_digest(start, end, use_index_first=True):
                 parts.append("## 🇯🇵 国内X線天文・関連プレス\n\n直近の関連プレスリリースは見つかりませんでした。")
         except Exception as e:
             print(f"国内プレスセクションの生成に失敗: {e}")
-            parts.append(f"## 🇯🇵 国内X線天文・関連プレス\n\n取得エラーのためスキップしました({e})")
+            if include_empty_notes:
+                parts.append(f"## 🇯🇵 国内X線天文・関連プレス\n\n取得エラーのためスキップしました({e})")
 
     # --- arXiv 論文(失敗しても他のセクションは続行)---
     # HOURS_BACK(通常実行では2h)そのままだと arXiv 側の索引反映の遅延や週末の
     # 投稿空白で論文を取りこぼすため、ARXIV_LOOKBACK_HOURS まで広めに探索し、
     # 既に掲載済みのものは exclude_ids で除外することで重複なく1日分をカバーする。
+    # さらに、1日1回は(新着0件でも)必ずチェックしたことをUTC日付単位で記録し、
+    # その日最初のチェックだけは1週間フォールバックとプレースホルダーを出す。
+    # これにより「新着が少ない日はarXivセクションが一日中出ない」のを防ぐ。
+    today_str = end.strftime("%Y-%m-%d")
+    is_daily_arxiv_check = seen.get("arxiv_last_checked_date") != today_str
+    arxiv_notes = include_empty_notes or is_daily_arxiv_check
     try:
         arxiv_seen = set(seen.get("arxiv", []))
         wide_start = min(start, end - timedelta(hours=ARXIV_LOOKBACK_HOURS))
         papers = fetch_papers(wide_start, end, exclude_ids=arxiv_seen)
         paper_window = "対象期間"
-        if not papers and include_empty_notes:
+        if not papers and arxiv_notes:
             papers = fetch_papers(end - timedelta(days=7), end, max_papers=min(MAX_PAPERS, 8), exclude_ids=arxiv_seen)
             paper_window = "直近1週間"
         if papers:
@@ -1192,11 +1203,13 @@ def generate_digest(start, end, use_index_first=True):
                 + paper_summary
             )
             mark_seen(seen, "arxiv", [arxiv_id(p["url"]) for p in papers])
-        elif include_empty_notes:
+        elif arxiv_notes:
             parts.append("## 📄 arXiv 新着論文\n\n直近1週間の新着はありませんでした。")
+        seen["arxiv_last_checked_date"] = today_str
     except Exception as e:
         print(f"arXiv セクションの生成に失敗: {e}")
-        parts.append(f"## 📄 arXiv 新着論文\n\n取得エラーのためスキップしました({e})")
+        if include_empty_notes:
+            parts.append(f"## 📄 arXiv 新着論文\n\n取得エラーのためスキップしました({e})")
 
     save_seen(seen)
 
