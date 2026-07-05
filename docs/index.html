@@ -193,6 +193,12 @@
     border-radius:6px;padding:7px 9px;margin:7px 0 9px;
   }
   .source-line a{font-family:"Noto Sans JP",sans-serif}
+  .published-time{
+    display:inline-flex;align-items:center;gap:6px;
+    margin:0 0 9px;padding:2px 8px;border:1px solid rgba(245,184,65,.44);
+    border-radius:999px;background:rgba(245,184,65,.08);color:var(--gold);
+    font-family:"IBM Plex Mono",monospace;font-size:11px;line-height:1.6;
+  }
   .section-note{
     display:none;
   }
@@ -409,6 +415,19 @@ function enhanceDigest(body){
         item.appendChild(node);
         node = next;
       }
+    }
+  }
+
+  for(const item of body.querySelectorAll('.digest-item')){
+    for(const li of [...item.querySelectorAll('li')]){
+      const text = li.textContent.trim();
+      const match = text.match(/^(?:日付|掲載|投稿日|公開日):\s*(.+)$/);
+      if(!match) continue;
+      const badge = document.createElement('div');
+      badge.className = 'published-time';
+      badge.textContent = `🕒 ${match[1]} 掲載`;
+      li.replaceWith(badge);
+      break;
     }
   }
 

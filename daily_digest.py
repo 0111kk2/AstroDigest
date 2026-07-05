@@ -166,6 +166,7 @@ def fetch_papers(start, end, max_papers=MAX_PAPERS, exclude_ids=None):
             "abstract": " ".join(entry.findtext(f"{ATOM}summary").split()),
             "url": url,
             "ads_url": ads_search_url(url),
+            "published": (entry.findtext(f"{ATOM}published") or entry.findtext(f"{ATOM}updated") or "")[:10],
             "authors": [a.findtext(f"{ATOM}name") for a in entry.findall(f"{ATOM}author")],
             "categories": [c.get("term") for c in entry.findall(f"{ATOM}category")],
         })
@@ -820,17 +821,18 @@ def _call_claude(prompt, max_tokens):
 
 def summarize_papers(papers):
     paper_text = "\n\n".join(
-        f"[{i+1}] タイトル: {p['title']}\nURL: {p['url']}\nADS: {p['ads_url']}\nアブストラクト: {p['abstract']}"
+        f"[{i+1}] タイトル: {p['title']}\n投稿日: {p.get('published') or '不明'}\nURL: {p['url']}\nADS: {p['ads_url']}\nアブストラクト: {p['abstract']}"
         for i, p in enumerate(papers)
     )
     prompt = (
         "以下は対象期間中に arXiv に投稿された論文の一覧です。"
         "各論文のアブストラクトを、要約ではなく自然な日本語に和訳してください。\n\n"
         "出力形式を厳守してください。前置きや ``` は不要です。\n"
-        "各論文はタイトル、元論文リンク、アブストラクト和訳だけにしてください。"
+        "各論文はタイトル、元論文リンク、掲載日、アブストラクト和訳だけにしてください。"
         "ハイライト、目的、方法、結果、意義、結論、章別説明、details は出さないでください。\n\n"
         "### 1. 論文タイトル\n"
         "元論文: [arXiv](URL) / [ADS](ADS_URL)\n"
+        "- **掲載**: YYYY-MM-DD\n"
         "- **アブストラクト和訳**: アブストラクト全文の日本語訳\n"
         "\n"
         "この形式で全論文を番号順に出してください。\n"
@@ -861,6 +863,7 @@ def format_paper_fallback(papers):
         blocks.append(
             f"### {i+1}. {p['title']}\n"
             f"元論文: [arXiv]({p['url']}) / [ADS]({p['ads_url']})\n"
+            f"- **掲載**: {p.get('published') or '不明'}\n"
             f"- **アブストラクト和訳**: 自動和訳に失敗したため、arXivリンク先を確認してください。"
         )
     return "\n\n".join(blocks)
@@ -1161,17 +1164,13 @@ def generate_digest(start, end, use_index_first=True):
             print(f"国内プレスセクションの生成に失敗: {e}")
 
     # --- arXiv 論文(失敗しても他のセクションは続行)---
-    # arXivは「その日の新着」として扱う。通常実行ではJST当日0:00から現在までを見て、
-    # 既出IDを除外する。直近1週間フォールバックは出さない。
-    jst = timezone(timedelta(hours=9))
-    jst_day_start = end.astimezone(jst).replace(hour=0, minute=0, second=0, microsecond=0)
-    arxiv_start = jst_day_start.astimezone(timezone.utc)
-    if include_empty_notes:
-        arxiv_start = min(start, arxiv_start)
+    # 論文は arXiv の週末・休日の投稿波を拾いやすいよう、直近7日を対象にする。
+    # 既出IDを除外するので、1時間ごとの実行でも同じ論文を再掲しない。
+    arxiv_start = end - timedelta(days=7)
     try:
         arxiv_seen = set(seen.get("arxiv", []))
         papers = fetch_papers(arxiv_start, end, exclude_ids=arxiv_seen)
-        paper_window = "本日"
+        paper_window = "直近7日"
         if papers:
             print(f"arXiv: {len(papers)} 件の論文を要約中...")
             try:
