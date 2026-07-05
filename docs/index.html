@@ -106,6 +106,8 @@
   .digest-section.atel{border-color:rgba(111,211,224,.38);background:rgba(111,211,224,.045)}
   .digest-section.atel > h2{border-color:var(--cyan)}
   .digest-section.arxiv{border-color:rgba(245,184,65,.32);background:rgba(245,184,65,.035)}
+  .digest-section.press{border-color:rgba(120,214,154,.36);background:rgba(120,214,154,.045)}
+  .digest-section.press > h2{border-color:#78d69a}
   .digest-item{
     border:1px solid rgba(255,255,255,.08);border-radius:8px;
     padding:10px 12px;margin:10px 0;background:rgba(16,20,38,.38);
@@ -113,6 +115,7 @@
   .digest-section.gcn .digest-item{border-left:3px solid #ff7676}
   .digest-section.atel .digest-item{border-left:3px solid var(--cyan)}
   .digest-section.arxiv .digest-item{border-left:3px solid var(--gold)}
+  .digest-section.press .digest-item{border-left:3px solid #78d69a}
   .digest-item h3{margin-top:0}
   .source-line{
     font-family:"IBM Plex Mono",monospace;font-size:12px;line-height:1.55;
@@ -123,6 +126,30 @@
   .section-note{
     font-family:"IBM Plex Mono",monospace;font-size:11px;color:var(--ink-dim);
     margin:-2px 0 8px;text-transform:uppercase;letter-spacing:.04em;
+  }
+  @media(min-width:980px){
+    .wrap{max-width:1120px}
+    header .wrap{align-items:center}
+    .views{max-width:1120px;grid-template-columns:180px 180px;margin-bottom:18px}
+    article.day{max-width:1120px;padding:22px 24px 12px}
+    .body{
+      display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);
+      gap:16px;align-items:start;
+    }
+    .body > hr{display:none}
+    .digest-section{margin:0}
+    .digest-section.arxiv{grid-column:1 / -1}
+    .digest-section.arxiv{
+      display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);
+      gap:12px 14px;
+    }
+    .digest-section.arxiv > h2,
+    .digest-section.arxiv > .section-note,
+    .digest-section.arxiv > p,
+    .digest-section.arxiv > hr{grid-column:1 / -1}
+    .digest-section.arxiv > .digest-item{margin:0}
+    .week-section .body{display:block}
+    .week-section .digest-section{margin:14px 0}
   }
 
   .more{display:block;margin:8px auto 0;padding:10px 26px;
@@ -211,6 +238,7 @@ function enhanceDigest(body){
     section.className = 'digest-section';
     if(text.includes('GCN')) section.classList.add('gcn');
     else if(text.includes('ATel')) section.classList.add('atel');
+    else if(text.includes('国内')) section.classList.add('press');
     else if(text.includes('arXiv')) section.classList.add('arxiv');
     h2.parentNode.insertBefore(section, h2);
 
@@ -226,6 +254,7 @@ function enhanceDigest(body){
     note.className = 'section-note';
     if(section.classList.contains('gcn')) note.textContent = 'GCN Circulars / event grouped';
     else if(section.classList.contains('atel')) note.textContent = 'Astronomer’s Telegram / post based';
+    else if(section.classList.contains('press')) note.textContent = 'Japan press releases / keyword filtered';
     else if(section.classList.contains('arxiv')) note.textContent = 'arXiv papers / abstract first';
     if(note.textContent) h2.insertAdjacentElement('afterend', note);
   }

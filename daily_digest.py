@@ -59,6 +59,23 @@ INCLUDE_ATEL = True        # False にすると ATel セクションを無効化
 MAX_ATELS = 12             # 1日に処理する ATel の最大件数
 ATEL_BODY_TRUNCATE = 900   # 個別本文が取れた場合、この文字数に切り詰めて要約に渡す
 
+# --- 国内プレスリリース ---
+INCLUDE_DOMESTIC_PRESS = True
+MAX_PRESS_RELEASES = 8
+PRESS_LOOKBACK_DAYS = 14
+PRESS_SOURCES = [
+    {"name": "ISAS/JAXA", "url": "https://www.isas.jaxa.jp/topics/"},
+    {"name": "JAXA", "url": "https://www.jaxa.jp/press/index_j.html"},
+    {"name": "理化学研究所", "url": "https://www.riken.jp/press/"},
+    {"name": "東京大学", "url": "https://www.u-tokyo.ac.jp/focus/ja/press/"},
+    {"name": "国立天文台", "url": "https://www.nao.ac.jp/news/"},
+]
+PRESS_KEYWORDS = [
+    "X線", "Ｘ線", "x-ray", "XRISM", "Resolve", "Xtend", "MAXI", "すざく", "ひとみ",
+    "ASTRO-H", "ブラックホール", "中性子星", "超新星", "銀河団", "高エネルギー天体",
+    "ガンマ線", "宇宙線", "マイクロカロリメータ", "CCD", "検出器",
+]
+
 # --- 共通 ---
 HOURS_BACK = 26            # 何時間前までを対象にするか(毎日実行なら26hで取りこぼし防止)
 # 使用する AI: GEMINI_API_KEY があれば Gemini(無料枠)、
@@ -283,6 +300,101 @@ def fetch_atels(start, end):
         if len(atels) >= MAX_ATELS:
             break
     return atels
+
+
+# ---------------------------------------------------------------- 国内プレスリリース
+
+def absolute_url(url, href):
+    return urllib.parse.urljoin(url, html.unescape(href))
+
+
+def parse_press_date(text):
+    patterns = [
+        (r"(\d{4})[./-](\d{1,2})[./-](\d{1,2})", "%Y-%m-%d"),
+        (r"(\d{4})年\s*(\d{1,2})月\s*(\d{1,2})日", "%Y-%m-%d"),
+    ]
+    for pattern, _ in patterns:
+        match = re.search(pattern, text)
+        if match:
+            y, m, d = (int(x) for x in match.groups())
+            try:
+                return datetime(y, m, d, tzinfo=timezone.utc)
+            except ValueError:
+                continue
+    return None
+
+
+def press_score(item):
+    text = f"{item['title']} {item['excerpt']}".lower()
+    return sum(1 for kw in PRESS_KEYWORDS if kw.lower() in text)
+
+
+def press_title_score(item):
+    text = item["title"].lower()
+    return sum(1 for kw in PRESS_KEYWORDS if kw.lower() in text)
+
+
+def fetch_press_source(source, start, end):
+    page = http_get(source["url"], timeout=60).decode("utf-8", "replace")
+    page = re.sub(r"(?is)<script.*?</script>|<style.*?</style>", " ", page)
+    anchors = re.finditer(r'<a\b[^>]*href="([^"]+)"[^>]*>(.*?)</a>', page, flags=re.S | re.I)
+    items = []
+    for match in anchors:
+        href, title_html = match.groups()
+        title = clean_html_text(title_html)
+        if len(title) < 8 or href.startswith("#"):
+            continue
+        if any(skip in title for skip in ("本文へ移動", "English", "サイトマップ", "お問い合わせ")):
+            continue
+
+        context = page[max(0, match.start() - 600):match.end() + 600]
+        text_context = clean_html_text(context)
+        posted = parse_press_date(text_context)
+        if posted is None:
+            continue
+        if posted < start or posted >= end:
+            continue
+
+        item = {
+            "source": source["name"],
+            "title": title,
+            "url": absolute_url(source["url"], href),
+            "posted": posted,
+            "excerpt": text_context[:260],
+        }
+        if press_title_score(item) <= 0:
+            continue
+        items.append(item)
+
+    unique = {}
+    for item in items:
+        unique[item["url"]] = item
+    return list(unique.values())
+
+
+def fetch_domestic_press(start, end):
+    window_start = min(start, end - timedelta(days=PRESS_LOOKBACK_DAYS))
+    items = []
+    for source in PRESS_SOURCES:
+        try:
+            items.extend(fetch_press_source(source, window_start, end))
+        except Exception as e:
+            print(f"  skip press source {source['name']}: {e}")
+    items.sort(key=lambda item: (press_score(item), item["posted"]), reverse=True)
+    return items[:MAX_PRESS_RELEASES]
+
+
+def format_domestic_press(items):
+    blocks = []
+    for item in items:
+        date = item["posted"].strftime("%Y-%m-%d")
+        blocks.append(
+            f"### {item['title']}\n"
+            f"原文: [{item['source']}]({item['url']})\n"
+            f"- **日付**: {date}\n"
+            f"- **抜粋**: {item['excerpt']}"
+        )
+    return "\n\n".join(blocks)
 
 
 def group_by_event(circulars):
@@ -578,6 +690,22 @@ def generate_digest(start, end, use_index_first=True):
         except Exception as e:
             print(f"ATel セクションの生成に失敗: {e}")
             parts.append(f"## 🛰️ ATel 新着速報\n\n取得エラーのためスキップしました({e})")
+
+    # --- 国内プレスリリース(失敗しても論文セクションは続行)---
+    if INCLUDE_DOMESTIC_PRESS:
+        try:
+            press_items = fetch_domestic_press(start, end)
+            if press_items:
+                print(f"国内プレス: {len(press_items)} 件を掲載")
+                parts.append(
+                    f"## 🇯🇵 国内X線天文・関連プレス({len(press_items)}件)\n\n"
+                    f"{format_domestic_press(press_items)}"
+                )
+            else:
+                parts.append("## 🇯🇵 国内X線天文・関連プレス\n\n直近の関連プレスリリースは見つかりませんでした。")
+        except Exception as e:
+            print(f"国内プレスセクションの生成に失敗: {e}")
+            parts.append(f"## 🇯🇵 国内X線天文・関連プレス\n\n取得エラーのためスキップしました({e})")
 
     # --- arXiv 論文 ---
     papers = fetch_papers(start, end)
