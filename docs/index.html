@@ -39,22 +39,6 @@
   .sub{font-family:"IBM Plex Mono",monospace;font-size:11px;color:var(--ink-dim)}
 
   main{padding:20px 0 80px}
-  .views{
-    display:grid;grid-template-columns:1fr 1fr;gap:8px;
-    margin:0 16px 16px;
-  }
-  @media(min-width:672px){.views{margin-left:auto;margin-right:auto;max-width:640px}}
-  .view{
-    min-height:40px;border:1px solid var(--line);border-radius:8px;
-    background:var(--surface);color:var(--ink-dim);
-    font-family:"Noto Sans JP",sans-serif;font-size:13px;font-weight:700;
-    cursor:pointer;
-  }
-  .view[aria-selected="true"]{
-    border-color:var(--gold);color:var(--gold);
-    background:color-mix(in srgb,var(--gold) 10%,var(--surface));
-  }
-  .view:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
   article.day{
     background:var(--surface);border:1px solid var(--line);border-radius:14px;
     padding:18px 18px 8px;margin:0 16px 22px;
@@ -68,13 +52,6 @@
   .stamp .date{color:var(--gold);font-weight:500;font-size:13px}
   .stamp::before{content:"OBS LOG";border:1px solid var(--gold);color:var(--gold);
     border-radius:4px;padding:1px 6px;font-size:10px;letter-spacing:.08em}
-  .stamp.week::before{content:"7 DAYS"}
-  .week-section{border-top:1px dashed var(--line);margin-top:14px;padding-top:12px}
-  .week-section:first-child{border-top:0;margin-top:0;padding-top:0}
-  .week-date{
-    font-family:"IBM Plex Mono",monospace;font-size:12px;color:var(--gold);
-    margin:4px 0 8px;
-  }
 
   /* ダイジェスト本文(markdownから生成) */
   .body h2{font-size:15px;margin:20px 0 8px;color:var(--ink);
@@ -139,24 +116,9 @@
     background:var(--surface-2);border-radius:8px;margin-top:6px;
     padding:8px 12px;font-size:13.5px;color:var(--ink-dim);
   }
-  .weekly-board{display:grid;gap:14px}
-  .week-summary{
-    display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:10px 0 14px;
-  }
-  .week-stat{
-    border:1px solid var(--line);border-radius:8px;padding:8px 10px;
-    background:rgba(255,255,255,.018);
-  }
-  .week-stat strong{display:block;color:var(--gold);font-family:"IBM Plex Mono",monospace;font-size:18px;line-height:1.3}
-  .week-stat span{font-size:12px;color:var(--ink-dim)}
-  .item-date{
-    display:inline-block;margin-bottom:5px;color:var(--gold);
-    font-family:"IBM Plex Mono",monospace;font-size:11px;
-  }
   @media(min-width:980px){
     .wrap{max-width:1120px}
     header .wrap{align-items:center}
-    .views{max-width:1120px;grid-template-columns:180px 180px;margin-bottom:18px}
     article.day{max-width:1120px;padding:22px 24px 12px}
     .body{
       display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);
@@ -174,11 +136,6 @@
     .digest-section.arxiv > p,
     .digest-section.arxiv > hr{grid-column:1 / -1}
     .digest-section.arxiv > .digest-item{margin:0}
-    .week-section .body{display:block}
-    .week-section .digest-section{margin:14px 0}
-    .weekly-board{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
-    .weekly-board .digest-section.arxiv{grid-column:1 / -1}
-    .week-summary{grid-template-columns:repeat(4,minmax(0,1fr))}
   }
 
   .more{display:block;margin:8px auto 0;padding:10px 26px;
@@ -200,10 +157,6 @@
 </div></header>
 
 <main class="wrap">
-  <div class="views" role="tablist" aria-label="表示切り替え">
-    <button class="view" id="dailyTab" type="button" role="tab" aria-selected="true">日別</button>
-    <button class="view" id="weekTab" type="button" role="tab" aria-selected="false">1週間</button>
-  </div>
   <section id="feed" aria-live="polite">
     <p class="note" id="status">読み込み中…</p>
   </section>
@@ -211,7 +164,7 @@
 
 <script>
 const PAGE = 7; // 一度に読み込む日数
-let dates = [], cursor = 0, mode = 'daily';
+let dates = [], cursor = 0;
 
 async function loadIndex(){
   const st = document.getElementById('status');
@@ -230,14 +183,6 @@ async function fetchDigest(date){
   const res = await fetch(`data/${date}.md`, {cache:'no-store'});
   if(!res.ok) throw new Error(date);
   return res.text();
-}
-
-function setMode(next){
-  mode = next;
-  document.getElementById('dailyTab').setAttribute('aria-selected', String(mode === 'daily'));
-  document.getElementById('weekTab').setAttribute('aria-selected', String(mode === 'week'));
-  if(mode === 'daily') renderDaily();
-  else renderWeek();
 }
 
 function clearFeed(){
@@ -375,68 +320,6 @@ async function loadMore(){
   }
 }
 
-async function renderWeek(){
-  const feed = clearFeed();
-  const week = dates.slice(0, 7);
-  if(!week.length) return;
-  const art = document.createElement('article');
-  art.className = 'day';
-  art.innerHTML = `<div class="stamp week"><span class="date">${week[week.length - 1]} - ${week[0]}</span></div>
-                   <div class="week-summary" id="weekSummary"></div>
-                   <div class="weekly-board" id="weekBoard"></div>`;
-  feed.appendChild(art);
-
-  const board = document.getElementById('weekBoard');
-  const buckets = [
-    ['gcn', '🚨 GCN / イベント速報'],
-    ['atel', '🛰️ ATel / Telegram投稿'],
-    ['press', '🇯🇵 国内プレス'],
-    ['arxiv', '📄 arXiv 論文']
-  ];
-  const sections = {};
-  const counts = {gcn:0, atel:0, press:0, arxiv:0};
-  for(const [key, title] of buckets){
-    const section = document.createElement('section');
-    section.className = `digest-section ${key}`;
-    section.innerHTML = `<h2>${title}</h2><div class="section-note">latest 7 days grouped by source</div>`;
-    sections[key] = section;
-    board.appendChild(section);
-  }
-
-  for(const d of week){
-    try{
-      const md = await fetchDigest(d);
-      const rendered = renderMarkdown(md);
-      for(const key of Object.keys(sections)){
-        for(const item of rendered.querySelectorAll(`.digest-section.${key} .digest-item`)){
-          const date = document.createElement('div');
-          date.className = 'item-date';
-          date.textContent = d;
-          item.prepend(date);
-          sections[key].appendChild(item);
-          counts[key] += 1;
-        }
-      }
-    }catch(e){ /* 個別の欠損はスキップ */ }
-  }
-  for(const key of Object.keys(sections)){
-    if(!counts[key]){
-      const empty = document.createElement('p');
-      empty.className = 'note';
-      empty.textContent = 'この期間の項目はありません。';
-      sections[key].appendChild(empty);
-    }
-  }
-  document.getElementById('weekSummary').innerHTML = `
-    <div class="week-stat"><strong>${week.length}</strong><span>収録日数</span></div>
-    <div class="week-stat"><strong>${counts.gcn + counts.atel}</strong><span>速報項目</span></div>
-    <div class="week-stat"><strong>${counts.press}</strong><span>国内プレス</span></div>
-    <div class="week-stat"><strong>${counts.arxiv}</strong><span>arXiv論文</span></div>`;
-  renderMath(art);
-}
-
-document.getElementById('dailyTab').addEventListener('click', () => setMode('daily'));
-document.getElementById('weekTab').addEventListener('click', () => setMode('week'));
 loadIndex();
 </script>
 </body>
