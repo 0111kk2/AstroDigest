@@ -404,8 +404,10 @@ def main():
 
     if os.environ.get("WEBHOOK_URL"):
         post_webhook(f"**{title}**\n\n{body}")
-    else:
+    elif os.environ.get("POST_GITHUB_ISSUE", "").lower() == "true":
         post_github_issue(title, body)
+    else:
+        print("Issue 投稿はスキップしました。")
 
 
 if __name__ == "__main__":
