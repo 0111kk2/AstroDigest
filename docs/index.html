@@ -104,9 +104,12 @@
     display:flex;align-items:center;gap:6px;
     font-family:"IBM Plex Mono",monospace;font-size:11px;color:var(--gold);
     letter-spacing:.04em;
-    margin:22px 0 12px;padding-top:14px;border-top:1px dashed var(--line);
+    margin:0 0 12px;padding:0 0 10px;border-bottom:1px dashed var(--line);
   }
-  .body .update-time:first-child{margin-top:0;padding-top:0;border-top:0}
+  .update-block{
+    border:1px solid rgba(255,255,255,.08);border-radius:10px;
+    padding:12px;margin:14px 0;background:rgba(255,255,255,.012);
+  }
   .body h2{font-size:15px;margin:20px 0 8px;color:var(--ink);
     border-left:3px solid var(--gold);padding-left:10px}
   .body h3{font-size:14.5px;margin:18px 0 4px;line-height:1.5}
@@ -168,11 +171,13 @@
     .calendar{max-width:1120px}
     .calendar-grid,.calendar-weekdays{max-width:520px}
     article.day{max-width:1120px;padding:22px 24px 12px}
-    .body{
+    .body{display:block}
+    .update-block{
       display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);
       gap:16px;align-items:start;
     }
-    .body > hr{display:none}
+    .update-block > .update-time{grid-column:1 / -1}
+    .update-block > hr{display:none}
     .digest-section{margin:0}
     .digest-section.arxiv{grid-column:1 / -1}
     .digest-section.arxiv{
@@ -365,11 +370,51 @@ function enhanceDigest(body){
   }
 }
 
+function normalizeUpdateMarkers(body){
+  for(const p of [...body.querySelectorAll('p')]){
+    const text = p.textContent.trim();
+    if(text.startsWith('🕒') && text.includes('更新')){
+      const div = document.createElement('div');
+      div.className = 'update-time';
+      div.textContent = text;
+      p.replaceWith(div);
+    }
+  }
+}
+
+function groupUpdateBlocks(body){
+  const children = [...body.childNodes];
+  let block = null;
+  const ensureBlock = () => {
+    if(!block){
+      block = document.createElement('section');
+      block.className = 'update-block';
+      body.appendChild(block);
+    }
+    return block;
+  };
+
+  body.innerHTML = '';
+  for(const child of children){
+    if(child.nodeType === Node.TEXT_NODE && !child.textContent.trim()) continue;
+    if(child.nodeType === Node.ELEMENT_NODE && child.classList.contains('update-time')){
+      block = document.createElement('section');
+      block.className = 'update-block';
+      body.appendChild(block);
+      block.appendChild(child);
+      continue;
+    }
+    ensureBlock().appendChild(child);
+  }
+}
+
 function renderMarkdown(md){
   const body = document.createElement('div');
   body.className = 'body';
   body.innerHTML = marked.parse(md);
+  normalizeUpdateMarkers(body);
   enhanceDigest(body);
+  groupUpdateBlocks(body);
   renderMath(body);
   return body;
 }

@@ -105,8 +105,7 @@ MISSION_KEYWORDS = [
 HOURS_BACK = 2             # 通常実行(1時間ごと想定)で何時間前まで遡るか。
                            # cron間隔(1h)+ Actions側の実行遅延バッファ
 BACKFILL_WINDOW_HOURS = 26 # --backfill で過去1日分を再現する際の窓(取りこぼし防止に26h)
-ARXIV_LOOKBACK_HOURS = 48  # arXiv は HOURS_BACK より広めに探索する(索引反映の遅延・
-                           # 週末の投稿空白を吸収するため)。掲載済みは既出チェックで除外する
+ARXIV_LOOKBACK_HOURS = 48  # バックフィルや手動確認用の上限。通常表示はJST当日分に制限する
 # 使用する AI: GEMINI_API_KEY があれば Gemini(無料枠)、
 # なければ ANTHROPIC_API_KEY で Claude を使う(自動判別)
 GEMINI_MODEL = "gemini-2.5-flash"            # 無料枠対応の安定モデル
@@ -1173,23 +1172,17 @@ def generate_digest(start, end, use_index_first=True):
                 parts.append(f"## 🇯🇵 国内X線天文・関連プレス\n\n取得エラーのためスキップしました({e})")
 
     # --- arXiv 論文(失敗しても他のセクションは続行)---
-    # HOURS_BACK(通常実行では2h)そのままだと arXiv 側の索引反映の遅延や週末の
-    # 投稿空白で論文を取りこぼすため、ARXIV_LOOKBACK_HOURS まで広めに探索し、
-    # 既に掲載済みのものは exclude_ids で除外することで重複なく1日分をカバーする。
-    # さらに、1日1回は(新着0件でも)必ずチェックしたことをUTC日付単位で記録し、
-    # その日最初のチェックだけは1週間フォールバックとプレースホルダーを出す。
-    # これにより「新着が少ない日はarXivセクションが一日中出ない」のを防ぐ。
-    today_str = end.strftime("%Y-%m-%d")
-    is_daily_arxiv_check = seen.get("arxiv_last_checked_date") != today_str
-    arxiv_notes = include_empty_notes or is_daily_arxiv_check
+    # arXivは「その日の新着」として扱う。通常実行ではJST当日0:00から現在までを見て、
+    # 既出IDを除外する。直近1週間フォールバックは出さない。
+    jst = timezone(timedelta(hours=9))
+    jst_day_start = end.astimezone(jst).replace(hour=0, minute=0, second=0, microsecond=0)
+    arxiv_start = jst_day_start.astimezone(timezone.utc)
+    if include_empty_notes:
+        arxiv_start = min(start, arxiv_start)
     try:
         arxiv_seen = set(seen.get("arxiv", []))
-        wide_start = min(start, end - timedelta(hours=ARXIV_LOOKBACK_HOURS))
-        papers = fetch_papers(wide_start, end, exclude_ids=arxiv_seen)
-        paper_window = "対象期間"
-        if not papers and arxiv_notes:
-            papers = fetch_papers(end - timedelta(days=7), end, max_papers=min(MAX_PAPERS, 8), exclude_ids=arxiv_seen)
-            paper_window = "直近1週間"
+        papers = fetch_papers(arxiv_start, end, exclude_ids=arxiv_seen)
+        paper_window = "本日"
         if papers:
             print(f"arXiv: {len(papers)} 件の論文を要約中...")
             try:
@@ -1203,9 +1196,8 @@ def generate_digest(start, end, use_index_first=True):
                 + paper_summary
             )
             mark_seen(seen, "arxiv", [arxiv_id(p["url"]) for p in papers])
-        elif arxiv_notes:
-            parts.append("## 📄 arXiv 新着論文\n\n直近1週間の新着はありませんでした。")
-        seen["arxiv_last_checked_date"] = today_str
+        elif include_empty_notes:
+            parts.append("## 📄 arXiv 新着論文\n\n本日の新着はありませんでした。")
     except Exception as e:
         print(f"arXiv セクションの生成に失敗: {e}")
         if include_empty_notes:
