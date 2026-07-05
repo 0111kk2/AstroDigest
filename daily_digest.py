@@ -107,6 +107,7 @@ CLAUDE_MODEL = "claude-haiku-4-5-20251001"   # 精度重視なら "claude-sonnet
 ARXIV_API = "http://export.arxiv.org/api/query"
 GCN_BASE = "https://gcn.nasa.gov"
 GCN_ARCHIVE = f"{GCN_BASE}/circulars/archive.json.tar.gz"
+GCN_RETRY_WAITS = [45, 120, 240]
 ATEL_BASE = "https://www.astronomerstelegram.org"
 TNS_CSV = "https://www.wis-tns.org/search?format=csv&classified_sne=1"
 ADS_BASE = "https://ui.adsabs.harvard.edu"
@@ -114,10 +115,19 @@ ATOM = "{http://www.w3.org/2005/Atom}"
 UA = {"User-Agent": "Mozilla/5.0 (compatible; AstroDigest/1.0; +https://github.com/)"}
 
 
-def http_get(url, timeout=60):
+def http_get(url, timeout=60, retry_statuses=(429, 500, 502, 503, 504), waits=(20, 60)):
     req = urllib.request.Request(url, headers=UA)
-    with urllib.request.urlopen(req, timeout=timeout) as res:
-        return res.read()
+    for attempt in range(len(waits) + 1):
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as res:
+                return res.read()
+        except urllib.error.HTTPError as e:
+            if e.code not in retry_statuses or attempt >= len(waits):
+                raise
+            retry_after = e.headers.get("Retry-After")
+            wait = int(retry_after) if retry_after and retry_after.isdigit() else waits[attempt]
+            print(f"HTTP {e.code} from {url}. {wait}秒待って再試行します...")
+            time.sleep(wait)
 
 
 # ---------------------------------------------------------------- arXiv
@@ -177,16 +187,19 @@ _archive_cache = None
 def fetch_circulars(start, end, use_index_first=True):
     """[start, end) の期間に作成された Circular を返す。
 
-    use_index_first=True の場合、まず最新一覧ページ(現在時刻に近い期間向け)を試し、
-    失敗時のみ公式アーカイブにフォールバックする。start が過去に大きく遡る場合
-    (バックフィル用途)は最新一覧では辿り着けないため use_index_first=False を指定する。
+    通常は公式一括アーカイブを優先する。個別JSON巡回はリクエスト数が多く、
+    GCN側の 429 を誘発しやすいため、アーカイブ取得に失敗した場合だけ使う。
     """
+    try:
+        return fetch_circulars_from_archive_window(start, end)
+    except Exception as e:
+        print(f"GCN archive 取得に失敗、最新一覧へフォールバックします: {e}")
     if use_index_first:
         try:
             return fetch_circulars_from_index(start, end)
         except Exception as e:
-            print(f"GCN index 取得に失敗、アーカイブへフォールバックします: {e}")
-    return fetch_circulars_from_archive_window(start, end)
+            print(f"GCN index 取得にも失敗しました: {e}")
+    raise RuntimeError("GCN archive and index fetch both failed")
 
 
 def normalize_circular(data):
@@ -236,7 +249,7 @@ def fetch_all_circulars_archive():
     if _archive_cache is not None:
         return _archive_cache
 
-    raw = http_get(GCN_ARCHIVE, timeout=180)
+    raw = http_get(GCN_ARCHIVE, timeout=240, waits=GCN_RETRY_WAITS)
     records = []
     with tarfile.open(fileobj=io.BytesIO(raw), mode="r:gz") as archive:
         names = [
@@ -807,6 +820,27 @@ def summarize_gcn(groups):
     return call_llm(prompt, max_tokens=6000)
 
 
+def format_gcn_fallback(groups):
+    blocks = []
+    for event, circs in groups.items():
+        links = " / ".join(
+            f"[GCN {c['id']}: {c['subject']}]({c['url']})"
+            for c in circs
+        )
+        bullets = []
+        for c in circs[:5]:
+            body = clean_html_text(c["body"])[:280]
+            bullets.append(f"- **GCN {c['id']}**: {c['subject']}。{body}")
+        if len(circs) > 5:
+            bullets.append(f"- ほか {len(circs) - 5} 報。原文リンクを確認してください。")
+        blocks.append(
+            f"### {event}({len(circs)}報)\n"
+            f"原文: {links}\n"
+            + "\n".join(bullets)
+        )
+    return "\n\n".join(blocks)
+
+
 def summarize_atels(atels):
     sections = []
     for atel in atels:
@@ -900,7 +934,11 @@ def generate_digest(start, end, use_index_first=True):
             if circulars:
                 groups = group_by_event(circulars)
                 print(f"GCN: {len(circulars)} 報 / {len(groups)} イベントを要約中...")
-                gcn_summary = attach_gcn_source_links(summarize_gcn(groups), groups)
+                try:
+                    gcn_summary = attach_gcn_source_links(summarize_gcn(groups), groups)
+                except Exception as e:
+                    print(f"GCN 要約に失敗、原文ベース表示にします: {e}")
+                    gcn_summary = format_gcn_fallback(groups)
                 parts.append(
                     f"## 🚨 新天体・トランジェント速報(GCN {len(circulars)}報 / {len(groups)}イベント)\n\n"
                     f"{gcn_summary}"
