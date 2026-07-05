@@ -70,7 +70,7 @@ def http_get(url, timeout=60):
 
 # ---------------------------------------------------------------- arXiv
 
-def fetch_recent_papers():
+def fetch_recent_papers(hours_back=HOURS_BACK):
     query = " OR ".join(f"cat:{c}" for c in CATEGORIES)
     params = urllib.parse.urlencode({
         "search_query": query,
@@ -80,7 +80,7 @@ def fetch_recent_papers():
     })
     root = ET.fromstring(http_get(f"{ARXIV_API}?{params}"))
 
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=HOURS_BACK)
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=hours_back)
     papers = []
     for entry in root.findall(f"{ATOM}entry"):
         published = datetime.fromisoformat(
@@ -187,6 +187,15 @@ def group_by_event(circulars):
     for c in circulars:
         groups[c["event"]].append(c)
     return groups
+
+
+def format_gcn_source_links(groups):
+    lines = []
+    for event, circs in groups.items():
+        lines.append(f"- **{event}**")
+        for c in circs:
+            lines.append(f"  - [GCN {c['id']}: {c['subject']}]({c['url']})")
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------- LLM 呼び出し
@@ -370,14 +379,11 @@ def main():
                 groups = group_by_event(circulars)
                 print(f"GCN: {len(circulars)} 報 / {len(groups)} イベントを要約中...")
                 gcn_summary = summarize_gcn(groups)
-                links = " / ".join(
-                    f"[{ev}]({GCN_BASE}/circulars/group/{urllib.parse.quote(ev)})"
-                    for ev in list(groups)[:10] if ev != "(その他)"
-                )
                 parts.append(
                     f"## 🚨 新天体・トランジェント速報(GCN {len(circulars)}報 / {len(groups)}イベント)\n\n"
                     f"{gcn_summary}\n\n"
-                    f"イベント別アーカイブ: {links}"
+                    f"### GCN 原文リンク\n\n"
+                    f"{format_gcn_source_links(groups)}"
                 )
             else:
                 parts.append("## 🚨 新天体・トランジェント速報\n\n直近24時間の GCN Circular はありませんでした。")
@@ -387,15 +393,19 @@ def main():
 
     # --- arXiv 論文 ---
     papers = fetch_recent_papers()
+    paper_window = "直近24時間"
+    if not papers:
+        papers = fetch_recent_papers(hours_back=24 * 7)
+        paper_window = "直近1週間"
     if papers:
         print(f"arXiv: {len(papers)} 件の論文を要約中...")
         parts.append(
-            f"## 📄 arXiv 新着論文({len(papers)}件)\n\n"
+            f"## 📄 arXiv 新着論文({paper_window} / {len(papers)}件)\n\n"
             f"対象カテゴリ: {', '.join(CATEGORIES)}\n\n"
             + summarize_papers(papers)
         )
     else:
-        parts.append("## 📄 arXiv 新着論文\n\n直近24時間の新着はありませんでした。")
+        parts.append("## 📄 arXiv 新着論文\n\n直近1週間の新着はありませんでした。")
 
     title = f"🔭 Astro Daily Digest — {today}"
     body = "\n\n---\n\n".join(parts)
