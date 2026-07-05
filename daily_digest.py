@@ -288,17 +288,18 @@ def summarize_papers(papers):
         return format_paper_fallback(papers)
 
     blocks = []
+    if data.get("highlight"):
+        blocks.append(f"**🌟 {data['highlight']}**")
     for i, p in enumerate(papers):
         s = by_n.get(i + 1, {})
         blocks.append(
-            f"### {i+1}. [{p['title']}]({p['url']})\n"
+            f"### {i+1}. {p['title']}\n"
+            f"元論文: [arXiv]({p['url']})\n"
             f"- **目的**: {s.get('purpose', '(生成失敗)')}\n"
             f"- **アブストラクト**: {s.get('abstract_jp', s.get('content', ''))}\n"
             f"- **内容**: {s.get('content', '')}\n"
             f"- **結論**: {s.get('conclusion', '')}"
         )
-    if data.get("highlight"):
-        blocks.append(f"**🌟 {data['highlight']}**")
     return "\n\n".join(blocks)
 
 
@@ -319,7 +320,8 @@ def format_paper_fallback(papers):
     blocks = []
     for i, p in enumerate(papers):
         blocks.append(
-            f"### {i+1}. [{p['title']}]({p['url']})\n"
+            f"### {i+1}. {p['title']}\n"
+            f"元論文: [arXiv]({p['url']})\n"
             f"- **著者**: {', '.join(p['authors'][:6])}{' ほか' if len(p['authors']) > 6 else ''}\n"
             f"- **カテゴリ**: {', '.join(p['categories'])}\n"
             f"- **アブストラクト**: 自動要約に失敗したため、arXivリンク先を確認してください。"
