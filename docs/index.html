@@ -127,6 +127,32 @@
     font-family:"IBM Plex Mono",monospace;font-size:11px;color:var(--ink-dim);
     margin:-2px 0 8px;text-transform:uppercase;letter-spacing:.04em;
   }
+  .detail-toggle{margin:8px 0 14px}
+  .detail-toggle button{
+    min-height:32px;border:1px solid var(--line);border-radius:6px;
+    background:var(--surface-2);color:var(--cyan);
+    font-family:"IBM Plex Mono",monospace;font-size:11.5px;cursor:pointer;
+    padding:6px 10px;
+  }
+  .detail-toggle button:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+  .detail-panel{
+    background:var(--surface-2);border-radius:8px;margin-top:6px;
+    padding:8px 12px;font-size:13.5px;color:var(--ink-dim);
+  }
+  .weekly-board{display:grid;gap:14px}
+  .week-summary{
+    display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:10px 0 14px;
+  }
+  .week-stat{
+    border:1px solid var(--line);border-radius:8px;padding:8px 10px;
+    background:rgba(255,255,255,.018);
+  }
+  .week-stat strong{display:block;color:var(--gold);font-family:"IBM Plex Mono",monospace;font-size:18px;line-height:1.3}
+  .week-stat span{font-size:12px;color:var(--ink-dim)}
+  .item-date{
+    display:inline-block;margin-bottom:5px;color:var(--gold);
+    font-family:"IBM Plex Mono",monospace;font-size:11px;
+  }
   @media(min-width:980px){
     .wrap{max-width:1120px}
     header .wrap{align-items:center}
@@ -150,6 +176,9 @@
     .digest-section.arxiv > .digest-item{margin:0}
     .week-section .body{display:block}
     .week-section .digest-section{margin:14px 0}
+    .weekly-board{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+    .weekly-board .digest-section.arxiv{grid-column:1 / -1}
+    .week-summary{grid-template-columns:repeat(4,minmax(0,1fr))}
   }
 
   .more{display:block;margin:8px auto 0;padding:10px 26px;
@@ -279,11 +308,40 @@ function enhanceDigest(body){
   }
 }
 
+function enhanceDetailToggles(body){
+  for(const detail of [...body.querySelectorAll('details')]){
+    const summary = detail.querySelector('summary');
+    const label = summary ? summary.textContent.trim() : '詳細を表示';
+    const wrap = document.createElement('div');
+    wrap.className = 'detail-toggle';
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.setAttribute('aria-expanded', 'false');
+    button.textContent = label;
+    const panel = document.createElement('div');
+    panel.className = 'detail-panel';
+    panel.hidden = true;
+    for(const child of [...detail.childNodes]){
+      if(child.nodeType === Node.ELEMENT_NODE && child.tagName === 'SUMMARY') continue;
+      panel.appendChild(child);
+    }
+    button.addEventListener('click', () => {
+      const open = panel.hidden;
+      panel.hidden = !open;
+      button.setAttribute('aria-expanded', String(open));
+      button.textContent = open ? '章別の和訳を隠す' : label;
+    });
+    wrap.append(button, panel);
+    detail.replaceWith(wrap);
+  }
+}
+
 function renderMarkdown(md){
   const body = document.createElement('div');
   body.className = 'body';
   body.innerHTML = marked.parse(md);
   enhanceDigest(body);
+  enhanceDetailToggles(body);
   renderMath(body);
   return body;
 }
@@ -320,23 +378,61 @@ async function loadMore(){
 async function renderWeek(){
   const feed = clearFeed();
   const week = dates.slice(0, 7);
+  if(!week.length) return;
   const art = document.createElement('article');
   art.className = 'day';
   art.innerHTML = `<div class="stamp week"><span class="date">${week[week.length - 1]} - ${week[0]}</span></div>
-                   <div class="body" id="weekBody"></div>`;
+                   <div class="week-summary" id="weekSummary"></div>
+                   <div class="weekly-board" id="weekBoard"></div>`;
   feed.appendChild(art);
 
-  const body = document.getElementById('weekBody');
+  const board = document.getElementById('weekBoard');
+  const buckets = [
+    ['gcn', '🚨 GCN / イベント速報'],
+    ['atel', '🛰️ ATel / Telegram投稿'],
+    ['press', '🇯🇵 国内プレス'],
+    ['arxiv', '📄 arXiv 論文']
+  ];
+  const sections = {};
+  const counts = {gcn:0, atel:0, press:0, arxiv:0};
+  for(const [key, title] of buckets){
+    const section = document.createElement('section');
+    section.className = `digest-section ${key}`;
+    section.innerHTML = `<h2>${title}</h2><div class="section-note">latest 7 days grouped by source</div>`;
+    sections[key] = section;
+    board.appendChild(section);
+  }
+
   for(const d of week){
     try{
       const md = await fetchDigest(d);
-      const section = document.createElement('section');
-      section.className = 'week-section';
-      section.innerHTML = `<div class="week-date">${d}</div>`;
-      section.appendChild(renderMarkdown(md));
-      body.appendChild(section);
+      const rendered = renderMarkdown(md);
+      for(const key of Object.keys(sections)){
+        for(const item of rendered.querySelectorAll(`.digest-section.${key} .digest-item`)){
+          const date = document.createElement('div');
+          date.className = 'item-date';
+          date.textContent = d;
+          item.prepend(date);
+          sections[key].appendChild(item);
+          counts[key] += 1;
+        }
+      }
     }catch(e){ /* 個別の欠損はスキップ */ }
   }
+  for(const key of Object.keys(sections)){
+    if(!counts[key]){
+      const empty = document.createElement('p');
+      empty.className = 'note';
+      empty.textContent = 'この期間の項目はありません。';
+      sections[key].appendChild(empty);
+    }
+  }
+  document.getElementById('weekSummary').innerHTML = `
+    <div class="week-stat"><strong>${week.length}</strong><span>収録日数</span></div>
+    <div class="week-stat"><strong>${counts.gcn + counts.atel}</strong><span>速報項目</span></div>
+    <div class="week-stat"><strong>${counts.press}</strong><span>国内プレス</span></div>
+    <div class="week-stat"><strong>${counts.arxiv}</strong><span>arXiv論文</span></div>`;
+  renderMath(art);
 }
 
 document.getElementById('dailyTab').addEventListener('click', () => setMode('daily'));
