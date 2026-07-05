@@ -11,6 +11,11 @@ GitHub Issue(または Slack/Discord Webhook)に投稿するスクリプト。
   GITHUB_TOKEN      : GitHub Actions が自動で提供(Issue 投稿に使用)
   GITHUB_REPOSITORY : GitHub Actions が自動で提供(例: "user/repo")
   WEBHOOK_URL       : (任意)Slack/Discord の Webhook URL。設定すると Issue の代わりに送信。
+
+使い方:
+  python daily_digest.py                # 通常実行(直近 HOURS_BACK 時間分を取得)
+  python daily_digest.py --backfill 7   # 昨日から遡って7日分を過去データとして一括生成
+                                         # (docs/data/ に既にある日付はスキップ)
 """
 
 import json
@@ -70,24 +75,20 @@ def http_get(url, timeout=60):
 
 # ---------------------------------------------------------------- arXiv
 
-def fetch_recent_papers(hours_back=HOURS_BACK, max_papers=MAX_PAPERS):
-    query = " OR ".join(f"cat:{c}" for c in CATEGORIES)
+def fetch_papers(start, end, max_papers=MAX_PAPERS):
+    """[start, end) の期間に投稿された論文を arXiv から取得する。"""
+    cat_query = " OR ".join(f"cat:{c}" for c in CATEGORIES)
+    date_query = f"submittedDate:[{start.strftime('%Y%m%d%H%M')} TO {end.strftime('%Y%m%d%H%M')}]"
     params = urllib.parse.urlencode({
-        "search_query": query,
+        "search_query": f"({cat_query}) AND {date_query}",
         "sortBy": "submittedDate",
         "sortOrder": "descending",
         "max_results": 200,
     })
     root = ET.fromstring(http_get(f"{ARXIV_API}?{params}"))
 
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=hours_back)
     papers = []
     for entry in root.findall(f"{ATOM}entry"):
-        published = datetime.fromisoformat(
-            entry.findtext(f"{ATOM}published").replace("Z", "+00:00")
-        )
-        if published < cutoff:
-            continue
         papers.append({
             "title": " ".join(entry.findtext(f"{ATOM}title").split()),
             "abstract": " ".join(entry.findtext(f"{ATOM}summary").split()),
@@ -107,13 +108,22 @@ def fetch_recent_papers(hours_back=HOURS_BACK, max_papers=MAX_PAPERS):
 
 # ---------------------------------------------------------------- GCN
 
-def fetch_recent_circulars():
-    """GCN の最新 Circular 一覧を取得し、直近 HOURS_BACK 時間のものを返す。"""
-    try:
-        return fetch_recent_circulars_from_index()
-    except Exception as e:
-        print(f"GCN index 取得に失敗、アーカイブへフォールバックします: {e}")
-        return fetch_recent_circulars_from_archive()
+_archive_cache = None
+
+
+def fetch_circulars(start, end, use_index_first=True):
+    """[start, end) の期間に作成された Circular を返す。
+
+    use_index_first=True の場合、まず最新一覧ページ(現在時刻に近い期間向け)を試し、
+    失敗時のみ公式アーカイブにフォールバックする。start が過去に大きく遡る場合
+    (バックフィル用途)は最新一覧では辿り着けないため use_index_first=False を指定する。
+    """
+    if use_index_first:
+        try:
+            return fetch_circulars_from_index(start, end)
+        except Exception as e:
+            print(f"GCN index 取得に失敗、アーカイブへフォールバックします: {e}")
+    return fetch_circulars_from_archive_window(start, end)
 
 
 def normalize_circular(data):
@@ -126,8 +136,8 @@ def normalize_circular(data):
     }
 
 
-def fetch_recent_circulars_from_index():
-    """最新一覧ページから個別JSONをたどる通常ルート。"""
+def fetch_circulars_from_index(start, end):
+    """最新一覧ページから個別JSONをたどる通常ルート(現在時刻に近い期間向け)。"""
     html = http_get(f"{GCN_BASE}/circulars?view=index&limit={MAX_CIRCULARS + 40}").decode()
     if "Unexpected error" in html:
         raise RuntimeError("GCN circulars index returned an unexpected error page")
@@ -138,7 +148,6 @@ def fetch_recent_circulars_from_index():
     if not ids:
         raise RuntimeError("GCN circulars index contained no circular links")
 
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=HOURS_BACK)
     circulars = []
     for cid in ids:
         try:
@@ -147,7 +156,9 @@ def fetch_recent_circulars_from_index():
             print(f"  skip circular {cid}: {e}")
             continue
         created = datetime.fromtimestamp(data["createdOn"] / 1000, tz=timezone.utc)
-        if created < cutoff:
+        if created >= end:
+            continue  # ウィンドウより新しい分はスキップ
+        if created < start:
             break  # 新しい順なので、時間窓を出たら打ち切り
         circulars.append(normalize_circular(data))
         time.sleep(0.3)  # サーバーへの負荷軽減
@@ -156,29 +167,41 @@ def fetch_recent_circulars_from_index():
     return circulars
 
 
-def fetch_recent_circulars_from_archive():
-    """公式一括JSONアーカイブから直近分を拾うフォールバック。"""
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=HOURS_BACK)
-    circulars = []
+def fetch_all_circulars_archive():
+    """公式一括JSONアーカイブを取得し、新しい順の生データ一覧を返す(プロセス内でキャッシュ)。"""
+    global _archive_cache
+    if _archive_cache is not None:
+        return _archive_cache
+
     raw = http_get(GCN_ARCHIVE, timeout=180)
+    records = []
     with tarfile.open(fileobj=io.BytesIO(raw), mode="r:gz") as archive:
         names = [
             name for name in archive.getnames()
             if re.fullmatch(r"archive\.json/\d+\.json", name)
         ]
-        names.sort(key=lambda name: int(name.rsplit("/", 1)[1].split(".", 1)[0]), reverse=True)
-
         for name in names:
             member = archive.extractfile(name)
             if member is None:
                 continue
-            data = json.load(member)
-            created = datetime.fromtimestamp(data["createdOn"] / 1000, tz=timezone.utc)
-            if created < cutoff:
-                break
-            circulars.append(normalize_circular(data))
-            if len(circulars) >= MAX_CIRCULARS:
-                break
+            records.append(json.load(member))
+    records.sort(key=lambda data: data["createdOn"], reverse=True)
+    _archive_cache = records
+    return records
+
+
+def fetch_circulars_from_archive_window(start, end):
+    """公式一括JSONアーカイブから [start, end) の期間分を抽出する(過去日付にも対応)。"""
+    circulars = []
+    for data in fetch_all_circulars_archive():
+        created = datetime.fromtimestamp(data["createdOn"] / 1000, tz=timezone.utc)
+        if created >= end:
+            continue
+        if created < start:
+            break  # 新しい順なので、時間窓を出たら打ち切り
+        circulars.append(normalize_circular(data))
+        if len(circulars) >= MAX_CIRCULARS:
+            break
     return circulars
 
 
@@ -266,7 +289,7 @@ def summarize_papers(papers):
         for i, p in enumerate(papers)
     )
     prompt = (
-        "以下は本日 arXiv に投稿された論文の一覧です。"
+        "以下は対象期間中に arXiv に投稿された論文の一覧です。"
         "各論文のアブストラクトを読み、日本語Markdownで構造化してください。\n\n"
         "出力形式を厳守してください。前置きや ``` は不要です。\n"
         "最初に必ず今日のハイライトを書き、その後に各論文を書いてください。\n\n"
@@ -322,7 +345,7 @@ def summarize_gcn(groups):
         )
         sections.append(f"■ イベント: {event}({len(circs)}報)\n{entries}")
     prompt = (
-        "以下は直近24時間に GCN (General Coordinates Network) に流れた"
+        "以下は対象期間に GCN (General Coordinates Network) に流れた"
         "天体速報(Circulars)を、天体イベントごとにまとめたものです。\n"
         "各イベントについて、日本語で以下をまとめてください:\n"
         "1. どんな天体・現象か(GRB / X線トランジェント / ニュートリノなど)\n"
@@ -383,7 +406,8 @@ def save_to_site(date_str, body):
     except FileNotFoundError:
         dates = []
     if date_str not in dates:
-        dates.insert(0, date_str)  # 新しい順
+        dates.append(date_str)
+    dates.sort(reverse=True)  # 新しい順(バックフィルで過去日付が後から入っても順序を保つ)
     with open(index_path, "w", encoding="utf-8") as f:
         json.dump(dates, f, ensure_ascii=False, indent=0)
     print(f"サイト用データを保存: docs/data/{date_str}.md")
@@ -391,14 +415,14 @@ def save_to_site(date_str, body):
 
 # ---------------------------------------------------------------- main
 
-def main():
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+def generate_digest(start, end, use_index_first=True):
+    """[start, end) の期間を対象にダイジェスト本文(Markdown)を1件分生成する。"""
     parts = []
 
     # --- GCN 速報(失敗しても論文セクションは続行)---
     if INCLUDE_GCN:
         try:
-            circulars = fetch_recent_circulars()
+            circulars = fetch_circulars(start, end, use_index_first=use_index_first)
             if circulars:
                 groups = group_by_event(circulars)
                 print(f"GCN: {len(circulars)} 報 / {len(groups)} イベントを要約中...")
@@ -408,16 +432,16 @@ def main():
                     f"{gcn_summary}"
                 )
             else:
-                parts.append("## 🚨 新天体・トランジェント速報\n\n直近24時間の GCN Circular はありませんでした。")
+                parts.append("## 🚨 新天体・トランジェント速報\n\n対象期間の GCN Circular はありませんでした。")
         except Exception as e:
             print(f"GCN セクションの生成に失敗: {e}")
-            parts.append(f"## 🚨 新天体・トランジェント速報\n\n取得エラーのため本日はスキップしました({e})")
+            parts.append(f"## 🚨 新天体・トランジェント速報\n\n取得エラーのためスキップしました({e})")
 
     # --- arXiv 論文 ---
-    papers = fetch_recent_papers()
-    paper_window = "直近24時間"
+    papers = fetch_papers(start, end)
+    paper_window = "対象期間"
     if not papers:
-        papers = fetch_recent_papers(hours_back=24 * 7, max_papers=min(MAX_PAPERS, 8))
+        papers = fetch_papers(end - timedelta(days=7), end, max_papers=min(MAX_PAPERS, 8))
         paper_window = "直近1週間"
     if papers:
         print(f"arXiv: {len(papers)} 件の論文を要約中...")
@@ -429,8 +453,16 @@ def main():
     else:
         parts.append("## 📄 arXiv 新着論文\n\n直近1週間の新着はありませんでした。")
 
+    return "\n\n---\n\n".join(parts)
+
+
+def main():
+    now = datetime.now(timezone.utc)
+    today = now.strftime("%Y-%m-%d")
+    start = now - timedelta(hours=HOURS_BACK)
+
+    body = generate_digest(start, now, use_index_first=True)
     title = f"🔭 Astro Daily Digest — {today}"
-    body = "\n\n---\n\n".join(parts)
 
     save_to_site(today, body)
 
@@ -442,5 +474,30 @@ def main():
         print("Issue 投稿はスキップしました。")
 
 
+def backfill(days_back=7):
+    """昨日から遡って days_back 日分を、docs/data/ に不足していれば生成する。"""
+    today = datetime.now(timezone.utc).date()
+    targets = sorted(today - timedelta(days=i) for i in range(1, days_back + 1))
+
+    for d in targets:
+        date_str = d.strftime("%Y-%m-%d")
+        if os.path.exists(f"docs/data/{date_str}.md"):
+            print(f"{date_str} は既に存在するためスキップ")
+            continue
+
+        run_time = datetime(d.year, d.month, d.day, 23, 0, tzinfo=timezone.utc)
+        start = run_time - timedelta(hours=HOURS_BACK)
+        print(f"=== {date_str} をバックフィル中({start} 〜 {run_time})===")
+        try:
+            body = generate_digest(start, run_time, use_index_first=False)
+        except Exception as e:
+            print(f"{date_str} の生成に失敗、スキップ: {e}")
+            continue
+        save_to_site(date_str, body)
+
+
 if __name__ == "__main__":
+    if len(sys.argv) > 1 and sys.argv[1] == "--backfill":
+        days = int(sys.argv[2]) if len(sys.argv) > 2 else 7
+        sys.exit(backfill(days))
     sys.exit(main())
