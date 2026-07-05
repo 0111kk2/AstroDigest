@@ -834,12 +834,12 @@ def summarize_papers(papers):
         "出力形式を厳守してください。前置きや ``` は不要です。\n"
         "各論文はタイトル、元論文リンク、掲載日、アブストラクト和訳だけにしてください。"
         "ハイライト、目的、方法、結果、意義、結論、章別説明、details は出さないでください。\n\n"
-        "### 1. 論文タイトル\n"
+        "### 論文タイトル\n"
         "元論文: [arXiv](URL) / [ADS](ADS_URL)\n"
         "- **掲載**: YYYY-MM-DD\n"
         "- **アブストラクト和訳**: アブストラクト全文の日本語訳\n"
         "\n"
-        "この形式で全論文を番号順に出してください。\n"
+        "この形式で全論文を出してください。見出しに 1. や 2. などの通し番号は付けないでください。\n"
         "専門用語は無理に訳さず残してください(例: QPO、ハードステート)。"
         "アブストラクトに書かれていないことは推測で補わないでください。\n\n"
         f"{paper_text}"
@@ -863,9 +863,9 @@ def parse_llm_json(raw):
 
 def format_paper_fallback(papers):
     blocks = []
-    for i, p in enumerate(papers):
+    for p in papers:
         blocks.append(
-            f"### {i+1}. {p['title']}\n"
+            f"### {p['title']}\n"
             f"元論文: [arXiv]({p['url']}) / [ADS]({p['ads_url']})\n"
             f"- **掲載**: {p.get('published') or '不明'}\n"
             f"- **アブストラクト和訳**: 自動和訳に失敗したため、arXivリンク先を確認してください。"
