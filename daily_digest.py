@@ -14,9 +14,11 @@ GitHub Issue(または Slack/Discord Webhook)に投稿するスクリプト。
 """
 
 import json
+import io
 import os
 import re
 import sys
+import tarfile
 import time
 import urllib.parse
 import urllib.request
@@ -55,6 +57,7 @@ CLAUDE_MODEL = "claude-haiku-4-5-20251001"   # 精度重視なら "claude-sonnet
 
 ARXIV_API = "http://export.arxiv.org/api/query"
 GCN_BASE = "https://gcn.nasa.gov"
+GCN_ARCHIVE = f"{GCN_BASE}/circulars/archive.json.tar.gz"
 ATOM = "{http://www.w3.org/2005/Atom}"
 UA = {"User-Agent": "astro-daily-digest/1.0"}
 
@@ -106,10 +109,34 @@ def fetch_recent_papers():
 
 def fetch_recent_circulars():
     """GCN の最新 Circular 一覧を取得し、直近 HOURS_BACK 時間のものを返す。"""
+    try:
+        return fetch_recent_circulars_from_index()
+    except Exception as e:
+        print(f"GCN index 取得に失敗、アーカイブへフォールバックします: {e}")
+        return fetch_recent_circulars_from_archive()
+
+
+def normalize_circular(data):
+    return {
+        "id": data["circularId"],
+        "subject": data["subject"],
+        "event": data.get("eventId") or "(その他)",
+        "body": data["body"][:GCN_BODY_TRUNCATE],
+        "url": f"{GCN_BASE}/circulars/{data['circularId']}",
+    }
+
+
+def fetch_recent_circulars_from_index():
+    """最新一覧ページから個別JSONをたどる通常ルート。"""
     html = http_get(f"{GCN_BASE}/circulars?view=index&limit={MAX_CIRCULARS + 40}").decode()
+    if "Unexpected error" in html:
+        raise RuntimeError("GCN circulars index returned an unexpected error page")
+
     ids = re.findall(r'href="(?:https://gcn\.nasa\.gov)?/circulars/([\d.]+)"', html)
     # 順序を保ったまま重複除去(新しい順)
     ids = list(dict.fromkeys(ids))[:MAX_CIRCULARS + 40]
+    if not ids:
+        raise RuntimeError("GCN circulars index contained no circular links")
 
     cutoff = datetime.now(timezone.utc) - timedelta(hours=HOURS_BACK)
     circulars = []
@@ -122,16 +149,36 @@ def fetch_recent_circulars():
         created = datetime.fromtimestamp(data["createdOn"] / 1000, tz=timezone.utc)
         if created < cutoff:
             break  # 新しい順なので、時間窓を出たら打ち切り
-        circulars.append({
-            "id": data["circularId"],
-            "subject": data["subject"],
-            "event": data.get("eventId") or "(その他)",
-            "body": data["body"][:GCN_BODY_TRUNCATE],
-            "url": f"{GCN_BASE}/circulars/{data['circularId']}",
-        })
+        circulars.append(normalize_circular(data))
         time.sleep(0.3)  # サーバーへの負荷軽減
         if len(circulars) >= MAX_CIRCULARS:
             break
+    return circulars
+
+
+def fetch_recent_circulars_from_archive():
+    """公式一括JSONアーカイブから直近分を拾うフォールバック。"""
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=HOURS_BACK)
+    circulars = []
+    raw = http_get(GCN_ARCHIVE, timeout=180)
+    with tarfile.open(fileobj=io.BytesIO(raw), mode="r:gz") as archive:
+        names = [
+            name for name in archive.getnames()
+            if re.fullmatch(r"archive\.json/\d+\.json", name)
+        ]
+        names.sort(key=lambda name: int(name.rsplit("/", 1)[1].split(".", 1)[0]), reverse=True)
+
+        for name in names:
+            member = archive.extractfile(name)
+            if member is None:
+                continue
+            data = json.load(member)
+            created = datetime.fromtimestamp(data["createdOn"] / 1000, tz=timezone.utc)
+            if created < cutoff:
+                break
+            circulars.append(normalize_circular(data))
+            if len(circulars) >= MAX_CIRCULARS:
+                break
     return circulars
 
 
