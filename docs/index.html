@@ -113,7 +113,6 @@
     padding-bottom:10px;border-bottom:1px dashed var(--line);margin-bottom:6px;
   }
   .stamp .date{color:var(--gold);font-weight:500;font-size:13px}
-  .stamp .midnight{color:var(--ink-dim);font-size:11px}
   .stamp::before{content:"00:00 JST";border:1px solid var(--gold);color:var(--gold);
     border-radius:4px;padding:1px 6px;font-size:10px;letter-spacing:.08em}
 
@@ -539,7 +538,7 @@ async function loadMore(){
       const art = document.createElement('article');
       art.className = 'day';
       art.id = dateArticleId(d);
-      art.innerHTML = `<div class="stamp"><span class="date">${d}</span><span class="midnight">day start</span></div>`;
+      art.innerHTML = `<div class="stamp"><span class="date">${d}</span></div>`;
       art.appendChild(renderMarkdown(md));
       feed.appendChild(art);
       applyFeedFilter();

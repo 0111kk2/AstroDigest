@@ -1201,7 +1201,8 @@ def generate_digest(start, end, use_index_first=True):
 
 def main():
     now = datetime.now(timezone.utc)
-    today = now.strftime("%Y-%m-%d")
+    jst = timezone(timedelta(hours=9))
+    today = now.astimezone(jst).strftime("%Y-%m-%d")
     start = now - timedelta(hours=HOURS_BACK)
 
     body = generate_digest(start, now, use_index_first=True)
