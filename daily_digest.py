@@ -699,34 +699,36 @@ def format_mission_news(items):
             f"### {item['title']}\n"
             f"原文: [{item['source']}]({item['url']})\n"
             f"- **日付**: {item['posted'].strftime('%Y-%m-%d')}\n"
-            f"- **概要**: {item['excerpt'] or '原文ページを確認してください。'}"
+            f"- **概要**: 自動和訳に失敗したため、原文リンク先を確認してください。"
         )
     return "\n\n".join(blocks)
 
 
 def summarize_mission_news(items):
-    sections = []
+    blocks = []
     for item in items:
-        sections.append(
+        prompt = (
+            "以下はミッション・観測所のニュース1件です。日本語Markdownで、原文リンクを保ったまま要点をまとめてください。\n\n"
+            "出力形式を厳守してください。前置きや ``` は不要です。\n"
+            "### タイトル\n"
+            "原文: [情報源](URL)\n"
+            "- **日付**: YYYY-MM-DD\n"
+            "- **概要**: 自然な日本語で2〜3文。英語の直訳調を避け、X線・高エネルギー天文として何が重要かを分かる範囲で書く。\n"
+            "- **原文和訳**: 本文抜粋を自然な日本語に和訳する。抜粋が無い場合はこの行ごと省略する。\n\n"
+            "原文抜粋に書かれていない観測結果や数値は推測しないでください。\n\n"
             f"[{item['source']}] {item['title']}\n"
             f"日付: {item['posted'].strftime('%Y-%m-%d')}\n"
             f"URL: {item['url']}\n"
             f"本文抜粋: {item['excerpt'] or '抜粋なし'}"
         )
-    prompt = (
-        "以下はミッション・観測所のニュースです。日本語Markdownで、原文リンクを保ったまま要点をまとめてください。\n\n"
-        "出力形式を厳守してください。前置きや ``` は不要です。\n"
-        "### タイトル\n"
-        "原文: [情報源](URL)\n"
-        "- **日付**: YYYY-MM-DD\n"
-        "- **概要**: 自然な日本語で2〜3文。英語の直訳調を避け、X線・高エネルギー天文として何が重要かを分かる範囲で書く。\n"
-        "- **原文和訳**: 本文抜粋が1〜2文程度の短いものだった場合のみ、この行を追加し、抜粋全体を自然な日本語に和訳する。"
-        "抜粋が3文以上・長文の場合、または抜粋が無い場合はこの行ごと省略する。\n\n"
-        "原文抜粋に書かれていない観測結果や数値は推測しないでください。\n\n"
-        + "\n\n".join(sections)
-    )
-    raw = call_llm(prompt, max_tokens=5000)
-    return re.sub(r"```(?:markdown)?|```", "", raw).strip()
+        try:
+            raw = call_llm(prompt, max_tokens=1400)
+            blocks.append(re.sub(r"```(?:markdown)?|```", "", raw).strip())
+            time.sleep(0.2)
+        except Exception as e:
+            print(f"  mission news item translation failed {item['url']}: {e}")
+            blocks.append(format_mission_news([item]))
+    return "\n\n".join(blocks)
 
 
 def group_by_event(circulars):
@@ -1089,11 +1091,6 @@ def generate_digest(start, end, use_index_first=True):
                 parts.append("## 🚨 新天体・トランジェント速報\n\n対象期間の GCN Circular はありませんでした。")
         except Exception as e:
             print(f"GCN セクションの生成に失敗: {e}")
-            if include_empty_notes:
-                if "429" in str(e) or "Too Many Requests" in str(e):
-                    parts.append("## 🚨 新天体・トランジェント速報\n\nGCN はNASA側のレート制限中のため、この回は未掲載です。TNS / ATel を優先して確認してください。")
-                else:
-                    parts.append("## 🚨 新天体・トランジェント速報\n\n取得制限のため、この回は未掲載です。")
 
     # --- TNS 新規天体(失敗しても他のセクションは続行)---
     if INCLUDE_TNS:
@@ -1110,8 +1107,6 @@ def generate_digest(start, end, use_index_first=True):
                 parts.append("## 🔭 TNS 新規・分類天体\n\n直近の関連天体は見つかりませんでした。")
         except Exception as e:
             print(f"TNS セクションの生成に失敗: {e}")
-            if include_empty_notes:
-                parts.append("## 🔭 TNS 新規・分類天体\n\n取得制限のため、この回は未掲載です。")
 
     # --- ATel 速報(失敗しても他のセクションは続行)---
     if INCLUDE_ATEL:
@@ -1127,8 +1122,6 @@ def generate_digest(start, end, use_index_first=True):
                 parts.append("## 🛰️ ATel 新着速報\n\n対象期間の ATel 投稿はありませんでした。")
         except Exception as e:
             print(f"ATel セクションの生成に失敗: {e}")
-            if include_empty_notes:
-                parts.append(f"## 🛰️ ATel 新着速報\n\n取得エラーのためスキップしました({e})")
 
     # --- ミッション/観測所ニュース(失敗しても他のセクションは続行)---
     if INCLUDE_MISSION_NEWS:
@@ -1150,8 +1143,6 @@ def generate_digest(start, end, use_index_first=True):
                 parts.append("## 🛰️ ミッション・観測所ニュース\n\n直近の関連ニュースは見つかりませんでした。")
         except Exception as e:
             print(f"ミッション/観測所ニュースセクションの生成に失敗: {e}")
-            if include_empty_notes:
-                parts.append("## 🛰️ ミッション・観測所ニュース\n\n取得制限のため、この回は未掲載です。")
 
     # --- 国内プレスリリース(失敗しても他のセクションは続行)---
     if INCLUDE_DOMESTIC_PRESS:
@@ -1168,8 +1159,6 @@ def generate_digest(start, end, use_index_first=True):
                 parts.append("## 🇯🇵 国内X線天文・関連プレス\n\n直近の関連プレスリリースは見つかりませんでした。")
         except Exception as e:
             print(f"国内プレスセクションの生成に失敗: {e}")
-            if include_empty_notes:
-                parts.append(f"## 🇯🇵 国内X線天文・関連プレス\n\n取得エラーのためスキップしました({e})")
 
     # --- arXiv 論文(失敗しても他のセクションは続行)---
     # arXivは「その日の新着」として扱う。通常実行ではJST当日0:00から現在までを見て、

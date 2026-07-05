@@ -103,7 +103,9 @@
   article.day{
     background:var(--surface);border:1px solid var(--line);border-radius:14px;
     padding:18px 18px 8px;margin:0 16px 22px;
+    scroll-margin-top:82px;
   }
+  article.day.is-jump-target{border-color:var(--gold);box-shadow:0 0 0 1px rgba(245,184,65,.28)}
   @media(min-width:672px){article.day{margin-left:auto;margin-right:auto;max-width:640px}}
   .stamp{
     display:flex;align-items:center;gap:10px;
@@ -111,7 +113,8 @@
     padding-bottom:10px;border-bottom:1px dashed var(--line);margin-bottom:6px;
   }
   .stamp .date{color:var(--gold);font-weight:500;font-size:13px}
-  .stamp::before{content:"OBS LOG";border:1px solid var(--gold);color:var(--gold);
+  .stamp .midnight{color:var(--ink-dim);font-size:11px}
+  .stamp::before{content:"00:00 JST";border:1px solid var(--gold);color:var(--gold);
     border-radius:4px;padding:1px 6px;font-size:10px;letter-spacing:.08em}
 
   /* ダイジェスト本文(markdownから生成) */
@@ -303,6 +306,10 @@ function formatDateKey(date){
   ].join('-');
 }
 
+function dateArticleId(date){
+  return `day-${date}`;
+}
+
 async function fetchDigest(date){
   const res = await fetch(`data/${date}.md`, {cache:'no-store'});
   if(!res.ok) throw new Error(date);
@@ -333,8 +340,8 @@ function renderCalendar(){
     button.className = `calendar-day${hasData ? ' has-data' : ''}${selectedDate === key ? ' is-selected' : ''}`;
     button.textContent = String(day);
     button.disabled = !hasData;
-    button.setAttribute('aria-label', hasData ? `${key} のダイジェストを表示` : `${key} はデータなし`);
-    if(hasData) button.addEventListener('click', () => renderSelectedDate(key));
+    button.setAttribute('aria-label', hasData ? `${key} へジャンプ` : `${key} はデータなし`);
+    if(hasData) button.addEventListener('click', () => jumpToDate(key));
     grid.appendChild(button);
   }
 }
@@ -502,21 +509,23 @@ async function renderDaily(){
   await loadMore();
 }
 
-async function renderSelectedDate(date){
+async function ensureDateLoaded(date){
+  while(!document.getElementById(dateArticleId(date)) && cursor < dates.length){
+    await loadMore();
+  }
+}
+
+async function jumpToDate(date){
   selectedDate = date;
-  cursor = 0;
   renderCalendar();
-  const feed = clearFeed();
-  try{
-    const md = await fetchDigest(date);
-    const art = document.createElement('article');
-    art.className = 'day';
-    art.innerHTML = `<div class="stamp"><span class="date">${date}</span></div>`;
-    art.appendChild(renderMarkdown(md));
-    feed.appendChild(art);
-    applyFeedFilter();
-  }catch(e){
-    feed.innerHTML = `<p class="note">${date} のダイジェストを読み込めませんでした。</p>`;
+  await ensureDateLoaded(date);
+  const target = document.getElementById(dateArticleId(date));
+  if(target){
+    document.querySelectorAll('article.day.is-jump-target').forEach(node => {
+      node.classList.remove('is-jump-target');
+    });
+    target.classList.add('is-jump-target');
+    target.scrollIntoView({behavior:'smooth', block:'start'});
   }
 }
 
@@ -529,7 +538,8 @@ async function loadMore(){
       const md = await fetchDigest(d);
       const art = document.createElement('article');
       art.className = 'day';
-      art.innerHTML = `<div class="stamp"><span class="date">${d}</span></div>`;
+      art.id = dateArticleId(d);
+      art.innerHTML = `<div class="stamp"><span class="date">${d}</span><span class="midnight">day start</span></div>`;
       art.appendChild(renderMarkdown(md));
       feed.appendChild(art);
       applyFeedFilter();
@@ -562,6 +572,7 @@ document.getElementById('calendarToggle').addEventListener('click', () => {
   const calendar = document.querySelector('.calendar');
   const collapsed = calendar.classList.toggle('is-collapsed');
   document.getElementById('calendarToggle').setAttribute('aria-expanded', String(!collapsed));
+  if(!collapsed) renderCalendar();
 });
 document.querySelectorAll('.feed-tab').forEach(button => {
   button.addEventListener('click', () => {
