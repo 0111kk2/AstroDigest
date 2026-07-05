@@ -20,6 +20,7 @@ GitHub Issue(または Slack/Discord Webhook)に投稿するスクリプト。
 
 import json
 import io
+import html
 import os
 import re
 import sys
@@ -52,6 +53,11 @@ INCLUDE_GCN = True         # False にすると GCN セクションを無効化
 MAX_CIRCULARS = 60         # 1日に処理する Circular の最大件数
 GCN_BODY_TRUNCATE = 800    # 各 Circular 本文をこの文字数に切り詰めて要約に渡す
 
+# --- ATel 速報 ---
+INCLUDE_ATEL = True        # False にすると ATel セクションを無効化
+MAX_ATELS = 12             # 1日に処理する ATel の最大件数
+ATEL_BODY_TRUNCATE = 900   # 個別本文が取れた場合、この文字数に切り詰めて要約に渡す
+
 # --- 共通 ---
 HOURS_BACK = 26            # 何時間前までを対象にするか(毎日実行なら26hで取りこぼし防止)
 # 使用する AI: GEMINI_API_KEY があれば Gemini(無料枠)、
@@ -63,8 +69,9 @@ CLAUDE_MODEL = "claude-haiku-4-5-20251001"   # 精度重視なら "claude-sonnet
 ARXIV_API = "http://export.arxiv.org/api/query"
 GCN_BASE = "https://gcn.nasa.gov"
 GCN_ARCHIVE = f"{GCN_BASE}/circulars/archive.json.tar.gz"
+ATEL_BASE = "https://www.astronomerstelegram.org"
 ATOM = "{http://www.w3.org/2005/Atom}"
-UA = {"User-Agent": "astro-daily-digest/1.0"}
+UA = {"User-Agent": "Mozilla/5.0 (compatible; AstroDigest/1.0; +https://github.com/)"}
 
 
 def http_get(url, timeout=60):
@@ -203,6 +210,78 @@ def fetch_circulars_from_archive_window(start, end):
         if len(circulars) >= MAX_CIRCULARS:
             break
     return circulars
+
+
+# ---------------------------------------------------------------- ATel
+
+def clean_html_text(value):
+    """HTML断片をプレーンテキストにする。"""
+    text = re.sub(r"<[^>]+>", " ", value)
+    return " ".join(html.unescape(text).split())
+
+
+def parse_atel_date(value):
+    return datetime.strptime(value.strip(), "%d %b %Y; %H:%M UT").replace(tzinfo=timezone.utc)
+
+
+def fetch_atel_body(url):
+    """ATel 個別ページ本文を取れた範囲で返す。取得制限時は空文字を返す。"""
+    try:
+        page = http_get(url, timeout=60).decode("utf-8", "replace")
+    except Exception as e:
+        print(f"  skip ATel body {url}: {e}")
+        return ""
+    if "We're Sorry" in page or "We are in the middle of updating" in page:
+        return ""
+
+    body_match = re.search(r"<BODY[^>]*>(.*)</BODY>", page, flags=re.S | re.I)
+    body = clean_html_text(body_match.group(1) if body_match else page)
+    body = re.sub(r"^\s*The Astronomer'?s Telegram\s*", "", body, flags=re.I)
+    return body[:ATEL_BODY_TRUNCATE].strip()
+
+
+def fetch_atels(start, end):
+    """ATel トップページの新着表から [start, end) の Telegram を取得する。"""
+    page = http_get(f"{ATEL_BASE}/", timeout=90).decode("utf-8", "replace")
+
+    row_re = re.compile(
+        r'<TR valign=top><TD\s+class="num"\s*>\s*(\d+)\s*</TD>\s*'
+        r'<TD class="title"><A HREF="([^"]+)">(.*?)</A></TD>\s*'
+        r'<TD\s+class="author"[^>]*>(.*?)<BR><EM>\s*([^<]+?)\s*</EM>',
+        flags=re.S | re.I,
+    )
+    rows = list(row_re.finditer(page))
+    if not rows:
+        if "We're Sorry" in page:
+            raise RuntimeError("ATel index returned an access-limited page")
+        raise RuntimeError("ATel index contained no telegram rows")
+
+    atels = []
+    for match in rows:
+        atel_id, href, title_html, authors_html, posted_text = match.groups()
+        try:
+            posted = parse_atel_date(clean_html_text(posted_text))
+        except ValueError as e:
+            print(f"  skip ATel {atel_id}: date parse failed: {e}")
+            continue
+        if posted >= end:
+            continue
+        if posted < start:
+            break
+
+        url = href if href.startswith("http") else f"{ATEL_BASE}/{href.lstrip('/')}"
+        atels.append({
+            "id": atel_id,
+            "title": clean_html_text(title_html),
+            "authors": clean_html_text(authors_html),
+            "posted": posted,
+            "url": url,
+            "body": fetch_atel_body(url),
+        })
+        time.sleep(0.25)
+        if len(atels) >= MAX_ATELS:
+            break
+    return atels
 
 
 def group_by_event(circulars):
@@ -361,6 +440,34 @@ def summarize_gcn(groups):
     return call_llm(prompt, max_tokens=6000)
 
 
+def summarize_atels(atels):
+    sections = []
+    for atel in atels:
+        body = atel["body"] or "本文未取得。タイトル、著者、投稿時刻、原文リンクのみ。"
+        sections.append(
+            f"ATel #{atel['id']}\n"
+            f"タイトル: {atel['title']}\n"
+            f"投稿時刻: {atel['posted'].strftime('%Y-%m-%d %H:%M UT')}\n"
+            f"著者: {atel['authors']}\n"
+            f"URL: {atel['url']}\n"
+            f"本文抜粋: {body}"
+        )
+    prompt = (
+        "以下は対象期間に ATel (The Astronomer's Telegram) に投稿された"
+        "天体速報です。日本語Markdownで要点をまとめてください。\n\n"
+        "出力形式を厳守してください。前置きや ``` は不要です。\n"
+        "### ATel #番号: タイトル\n"
+        "原文: [ATel #番号](URL)\n"
+        "まとめ本文(2〜4文)\n\n"
+        "本文未取得の項目は、タイトル・著者・投稿時刻から分かる範囲だけを書き、"
+        "観測結果や数値を推測で補わないでください。"
+        "重要度が高い順(新発見・追観測・多波長連携が分かるものが上)に並べてください。\n\n"
+        + "\n\n".join(sections)
+    )
+    raw = call_llm(prompt, max_tokens=6000)
+    return re.sub(r"```(?:markdown)?|```", "", raw).strip()
+
+
 # ---------------------------------------------------------------- 投稿
 
 def post_github_issue(title, body):
@@ -436,6 +543,22 @@ def generate_digest(start, end, use_index_first=True):
         except Exception as e:
             print(f"GCN セクションの生成に失敗: {e}")
             parts.append(f"## 🚨 新天体・トランジェント速報\n\n取得エラーのためスキップしました({e})")
+
+    # --- ATel 速報(失敗しても論文セクションは続行)---
+    if INCLUDE_ATEL:
+        try:
+            atels = fetch_atels(start, end)
+            if atels:
+                print(f"ATel: {len(atels)} 件を要約中...")
+                parts.append(
+                    f"## 🛰️ ATel 新着速報({len(atels)}件)\n\n"
+                    f"{summarize_atels(atels)}"
+                )
+            else:
+                parts.append("## 🛰️ ATel 新着速報\n\n対象期間の ATel 投稿はありませんでした。")
+        except Exception as e:
+            print(f"ATel セクションの生成に失敗: {e}")
+            parts.append(f"## 🛰️ ATel 新着速報\n\n取得エラーのためスキップしました({e})")
 
     # --- arXiv 論文 ---
     papers = fetch_papers(start, end)
