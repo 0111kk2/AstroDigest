@@ -3,10 +3,14 @@ name: Astro Daily Digest
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 23 * * *" # 08:00 JST
+    - cron: "7 * * * *" # 毎時7分(GitHub側が混みやすい毎時00分は避ける)
 
 permissions:
   contents: write
+
+concurrency:
+  group: astro-daily-digest
+  cancel-in-progress: false # 前回実行が長引いた場合は待たせて直列化する(git pushの競合防止)
 
 jobs:
   digest:

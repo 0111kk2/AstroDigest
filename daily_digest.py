@@ -13,9 +13,14 @@ GitHub Issue(または Slack/Discord Webhook)に投稿するスクリプト。
   WEBHOOK_URL       : (任意)Slack/Discord の Webhook URL。設定すると Issue の代わりに送信。
 
 使い方:
-  python daily_digest.py                # 通常実行(直近 HOURS_BACK 時間分を取得)
+  python daily_digest.py                # 通常実行(直近 HOURS_BACK 時間分を取得、1時間ごとの実行を想定)
   python daily_digest.py --backfill 7   # 昨日から遡って7日分を過去データとして一括生成
                                          # (docs/data/ に既にある日付はスキップ)
+
+1時間ごとの実行について:
+  通常実行は「その日のファイルに新着があれば追記」する方式。新着が無い回は
+  ファイルもIssue/Webhookも更新しない(静かにスキップする)ので、1時間おきに
+  実行しても「新着なし」通知でスパムにはならない。
 """
 
 import json
@@ -97,7 +102,9 @@ MISSION_KEYWORDS = [
 ]
 
 # --- 共通 ---
-HOURS_BACK = 26            # 何時間前までを対象にするか(毎日実行なら26hで取りこぼし防止)
+HOURS_BACK = 2             # 通常実行(1時間ごと想定)で何時間前まで遡るか。
+                           # cron間隔(1h)+ Actions側の実行遅延バッファ
+BACKFILL_WINDOW_HOURS = 26 # --backfill で過去1日分を再現する際の窓(取りこぼし防止に26h)
 # 使用する AI: GEMINI_API_KEY があれば Gemini(無料枠)、
 # なければ ANTHROPIC_API_KEY で Claude を使う(自動判別)
 GEMINI_MODEL = "gemini-2.5-flash"            # 無料枠対応の安定モデル
@@ -950,11 +957,8 @@ def post_webhook(text):
     print(f"Webhook sent ({len(chunks)} message(s))")
 
 
-def save_to_site(date_str, body):
-    """GitHub Pages 用にダイジェストを docs/data/ に保存し、日付一覧を更新する。"""
-    os.makedirs("docs/data", exist_ok=True)
-    with open(f"docs/data/{date_str}.md", "w", encoding="utf-8") as f:
-        f.write(body)
+def update_index(date_str):
+    """docs/data/index.json に date_str を登録する(重複なし、新しい順)。"""
     index_path = "docs/data/index.json"
     try:
         with open(index_path, encoding="utf-8") as f:
@@ -966,16 +970,56 @@ def save_to_site(date_str, body):
     dates.sort(reverse=True)  # 新しい順(バックフィルで過去日付が後から入っても順序を保つ)
     with open(index_path, "w", encoding="utf-8") as f:
         json.dump(dates, f, ensure_ascii=False, indent=0)
+
+
+def save_to_site(date_str, body):
+    """バックフィル用: その日1日分の内容を丸ごと書き込む(上書き)。"""
+    os.makedirs("docs/data", exist_ok=True)
+    with open(f"docs/data/{date_str}.md", "w", encoding="utf-8") as f:
+        f.write(body)
+    update_index(date_str)
     print(f"サイト用データを保存: docs/data/{date_str}.md")
+
+
+def append_to_site(date_str, run_time, body):
+    """通常実行用: その日のファイルの先頭に新しい更新ブロックを追記する。
+
+    1時間おきの実行を想定し、同じ日に複数回実行されても過去の更新を
+    上書きせず、新しい順に積み上げていく。
+    """
+    os.makedirs("docs/data", exist_ok=True)
+    path = f"docs/data/{date_str}.md"
+    try:
+        with open(path, encoding="utf-8") as f:
+            existing = f.read()
+    except FileNotFoundError:
+        existing = ""
+
+    jst = run_time.astimezone(timezone(timedelta(hours=9)))
+    block = f"**🕒 {jst.strftime('%H:%M')} JST 更新**\n\n{body}"
+    combined = block if not existing else f"{block}\n\n---\n\n{existing}"
+
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(combined)
+    update_index(date_str)
+    print(f"サイト用データを追記: {path}")
 
 
 # ---------------------------------------------------------------- main
 
 def generate_digest(start, end, use_index_first=True):
-    """[start, end) の期間を対象にダイジェスト本文(Markdown)を1件分生成する。"""
+    """[start, end) の期間を対象にダイジェスト本文(Markdown)を1件分生成する。
+
+    include_empty_notes が False の場合(短い時間窓 = 1時間おきの通常実行を想定)、
+    「新着なし」のプレースホルダーは出さずセクション自体を省略する。エラー表示は
+    頻度が低く実行上有用な情報なので、この場合も出す。
+    全セクションが空(新着もエラーもない)場合は None を返し、呼び出し側で
+    ファイル更新や通知をスキップできるようにする。
+    """
+    include_empty_notes = (end - start) >= timedelta(hours=12)
     parts = []
 
-    # --- GCN 速報(失敗しても論文セクションは続行)---
+    # --- GCN 速報(失敗しても他のセクションは続行)---
     if INCLUDE_GCN:
         try:
             circulars = fetch_circulars(start, end, use_index_first=use_index_first)
@@ -991,7 +1035,7 @@ def generate_digest(start, end, use_index_first=True):
                     f"## 🚨 新天体・トランジェント速報(GCN {len(circulars)}報 / {len(groups)}イベント)\n\n"
                     f"{gcn_summary}"
                 )
-            else:
+            elif include_empty_notes:
                 parts.append("## 🚨 新天体・トランジェント速報\n\n対象期間の GCN Circular はありませんでした。")
         except Exception as e:
             print(f"GCN セクションの生成に失敗: {e}")
@@ -1000,7 +1044,7 @@ def generate_digest(start, end, use_index_first=True):
             else:
                 parts.append(f"## 🚨 新天体・トランジェント速報\n\n取得制限のため、この回は未掲載です。")
 
-    # --- TNS 新規天体(失敗しても論文セクションは続行)---
+    # --- TNS 新規天体(失敗しても他のセクションは続行)---
     if INCLUDE_TNS:
         try:
             tns_items = fetch_tns(start, end)
@@ -1010,13 +1054,13 @@ def generate_digest(start, end, use_index_first=True):
                     f"## 🔭 TNS 新規・分類天体({len(tns_items)}件)\n\n"
                     f"{format_tns(tns_items)}"
                 )
-            else:
+            elif include_empty_notes:
                 parts.append("## 🔭 TNS 新規・分類天体\n\n直近の関連天体は見つかりませんでした。")
         except Exception as e:
             print(f"TNS セクションの生成に失敗: {e}")
             parts.append("## 🔭 TNS 新規・分類天体\n\n取得制限のため、この回は未掲載です。")
 
-    # --- ATel 速報(失敗しても論文セクションは続行)---
+    # --- ATel 速報(失敗しても他のセクションは続行)---
     if INCLUDE_ATEL:
         try:
             atels = fetch_atels(start, end)
@@ -1026,13 +1070,13 @@ def generate_digest(start, end, use_index_first=True):
                     f"## 🛰️ ATel 新着速報({len(atels)}件)\n\n"
                     f"{summarize_atels(atels)}"
                 )
-            else:
+            elif include_empty_notes:
                 parts.append("## 🛰️ ATel 新着速報\n\n対象期間の ATel 投稿はありませんでした。")
         except Exception as e:
             print(f"ATel セクションの生成に失敗: {e}")
             parts.append(f"## 🛰️ ATel 新着速報\n\n取得エラーのためスキップしました({e})")
 
-    # --- ミッション/観測所ニュース(失敗しても論文セクションは続行)---
+    # --- ミッション/観測所ニュース(失敗しても他のセクションは続行)---
     if INCLUDE_MISSION_NEWS:
         try:
             mission_items = fetch_mission_news(start, end)
@@ -1047,13 +1091,13 @@ def generate_digest(start, end, use_index_first=True):
                     f"## 🛰️ ミッション・観測所ニュース({len(mission_items)}件)\n\n"
                     f"{mission_summary}"
                 )
-            else:
+            elif include_empty_notes:
                 parts.append("## 🛰️ ミッション・観測所ニュース\n\n直近の関連ニュースは見つかりませんでした。")
         except Exception as e:
             print(f"ミッション/観測所ニュースセクションの生成に失敗: {e}")
             parts.append("## 🛰️ ミッション・観測所ニュース\n\n取得制限のため、この回は未掲載です。")
 
-    # --- 国内プレスリリース(失敗しても論文セクションは続行)---
+    # --- 国内プレスリリース(失敗しても他のセクションは続行)---
     if INCLUDE_DOMESTIC_PRESS:
         try:
             press_items = fetch_domestic_press(start, end)
@@ -1063,17 +1107,17 @@ def generate_digest(start, end, use_index_first=True):
                     f"## 🇯🇵 国内X線天文・関連プレス({len(press_items)}件)\n\n"
                     f"{format_domestic_press(press_items)}"
                 )
-            else:
+            elif include_empty_notes:
                 parts.append("## 🇯🇵 国内X線天文・関連プレス\n\n直近の関連プレスリリースは見つかりませんでした。")
         except Exception as e:
             print(f"国内プレスセクションの生成に失敗: {e}")
             parts.append(f"## 🇯🇵 国内X線天文・関連プレス\n\n取得エラーのためスキップしました({e})")
 
-    # --- arXiv 論文(失敗してもサイト保存は続行)---
+    # --- arXiv 論文(失敗しても他のセクションは続行)---
     try:
         papers = fetch_papers(start, end)
         paper_window = "対象期間"
-        if not papers:
+        if not papers and include_empty_notes:
             papers = fetch_papers(end - timedelta(days=7), end, max_papers=min(MAX_PAPERS, 8))
             paper_window = "直近1週間"
         if papers:
@@ -1088,12 +1132,14 @@ def generate_digest(start, end, use_index_first=True):
                 f"対象カテゴリ: {', '.join(CATEGORIES)}\n\n"
                 + paper_summary
             )
-        else:
+        elif include_empty_notes:
             parts.append("## 📄 arXiv 新着論文\n\n直近1週間の新着はありませんでした。")
     except Exception as e:
         print(f"arXiv セクションの生成に失敗: {e}")
         parts.append(f"## 📄 arXiv 新着論文\n\n取得エラーのためスキップしました({e})")
 
+    if not parts:
+        return None
     return "\n\n---\n\n".join(parts)
 
 
@@ -1103,9 +1149,12 @@ def main():
     start = now - timedelta(hours=HOURS_BACK)
 
     body = generate_digest(start, now, use_index_first=True)
-    title = f"🔭 Astro Daily Digest — {today}"
+    if body is None:
+        print("対象期間に新着はありませんでした。更新をスキップします。")
+        return
 
-    save_to_site(today, body)
+    title = f"🔭 Astro Daily Digest — {today}"
+    append_to_site(today, now, body)
 
     if os.environ.get("WEBHOOK_URL"):
         post_webhook(f"**{title}**\n\n{body}")
@@ -1127,14 +1176,14 @@ def backfill(days_back=7):
             continue
 
         run_time = datetime(d.year, d.month, d.day, 23, 0, tzinfo=timezone.utc)
-        start = run_time - timedelta(hours=HOURS_BACK)
+        start = run_time - timedelta(hours=BACKFILL_WINDOW_HOURS)
         print(f"=== {date_str} をバックフィル中({start} 〜 {run_time})===")
         try:
             body = generate_digest(start, run_time, use_index_first=False)
         except Exception as e:
             print(f"{date_str} の生成に失敗、スキップ: {e}")
             continue
-        save_to_site(date_str, body)
+        save_to_site(date_str, body or f"対象期間({date_str})に新着はありませんでした。")
 
 
 if __name__ == "__main__":
