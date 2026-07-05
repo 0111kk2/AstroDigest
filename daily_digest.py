@@ -105,6 +105,8 @@ MISSION_KEYWORDS = [
 HOURS_BACK = 2             # 通常実行(1時間ごと想定)で何時間前まで遡るか。
                            # cron間隔(1h)+ Actions側の実行遅延バッファ
 BACKFILL_WINDOW_HOURS = 26 # --backfill で過去1日分を再現する際の窓(取りこぼし防止に26h)
+ARXIV_LOOKBACK_HOURS = 48  # arXiv は HOURS_BACK より広めに探索する(索引反映の遅延・
+                           # 週末の投稿空白を吸収するため)。掲載済みは既出チェックで除外する
 # 使用する AI: GEMINI_API_KEY があれば Gemini(無料枠)、
 # なければ ANTHROPIC_API_KEY で Claude を使う(自動判別)
 GEMINI_MODEL = "gemini-2.5-flash"            # 無料枠対応の安定モデル
@@ -139,8 +141,12 @@ def http_get(url, timeout=60, retry_statuses=(429, 500, 502, 503, 504), waits=(2
 
 # ---------------------------------------------------------------- arXiv
 
-def fetch_papers(start, end, max_papers=MAX_PAPERS):
-    """[start, end) の期間に投稿された論文を arXiv から取得する。"""
+def fetch_papers(start, end, max_papers=MAX_PAPERS, exclude_ids=None):
+    """[start, end) の期間に投稿された論文を arXiv から取得する。
+
+    exclude_ids に arXiv ID を渡すと、既に掲載済みの論文を除外する
+    (1時間ごとの実行で同じ論文を何度も再掲しないため)。
+    """
     cat_query = " OR ".join(f"cat:{c}" for c in CATEGORIES)
     date_query = f"submittedDate:[{start.strftime('%Y%m%d%H%M')} TO {end.strftime('%Y%m%d%H%M')}]"
     params = urllib.parse.urlencode({
@@ -153,11 +159,14 @@ def fetch_papers(start, end, max_papers=MAX_PAPERS):
 
     papers = []
     for entry in root.findall(f"{ATOM}entry"):
+        url = entry.findtext(f"{ATOM}id")
+        if exclude_ids and arxiv_id(url) in exclude_ids:
+            continue
         papers.append({
             "title": " ".join(entry.findtext(f"{ATOM}title").split()),
             "abstract": " ".join(entry.findtext(f"{ATOM}summary").split()),
-            "url": entry.findtext(f"{ATOM}id"),
-            "ads_url": ads_search_url(entry.findtext(f"{ATOM}id")),
+            "url": url,
+            "ads_url": ads_search_url(url),
             "authors": [a.findtext(f"{ATOM}name") for a in entry.findall(f"{ATOM}author")],
             "categories": [c.get("term") for c in entry.findall(f"{ATOM}category")],
         })
@@ -452,7 +461,7 @@ def fetch_press_excerpt(url, title):
     return excerpt[:360].strip()
 
 
-def fetch_domestic_press(start, end):
+def fetch_domestic_press(start, end, exclude_urls=None):
     window_start = min(start, end - timedelta(days=PRESS_LOOKBACK_DAYS))
     items = []
     for source in PRESS_SOURCES:
@@ -460,6 +469,8 @@ def fetch_domestic_press(start, end):
             items.extend(fetch_press_source(source, window_start, end))
         except Exception as e:
             print(f"  skip press source {source['name']}: {e}")
+    if exclude_urls:
+        items = [item for item in items if item["url"] not in exclude_urls]
     items.sort(key=lambda item: (press_score(item), item["posted"]), reverse=True)
     return items[:MAX_PRESS_RELEASES]
 
@@ -521,7 +532,7 @@ def tns_object_url(name):
     return f"https://www.wis-tns.org/object/{urllib.parse.quote(slug)}"
 
 
-def fetch_tns(start, end):
+def fetch_tns(start, end, exclude_names=None):
     window_start = min(start, end - timedelta(days=TNS_LOOKBACK_DAYS))
     data = http_get(TNS_CSV, timeout=90).decode("utf-8", "replace")
     rows = csv.DictReader(io.StringIO(data))
@@ -531,7 +542,7 @@ def fetch_tns(start, end):
         if discovered is None or discovered < window_start or discovered >= end:
             continue
         name = row.get("Name", "").strip()
-        if not name:
+        if not name or (exclude_names and name in exclude_names):
             continue
         obj_type = row.get("Obj. Type", "").strip() or "unclassified"
         items.append({
@@ -666,7 +677,7 @@ def fetch_news_excerpt(url):
     return ""
 
 
-def fetch_mission_news(start, end):
+def fetch_mission_news(start, end, exclude_urls=None):
     items = []
     for source in MISSION_NEWS_SOURCES:
         try:
@@ -676,6 +687,8 @@ def fetch_mission_news(start, end):
                 items.extend(parse_html_news_items(source, start, end))
         except Exception as e:
             print(f"  skip mission news source {source['name']}: {e}")
+    if exclude_urls:
+        items = [item for item in items if item["url"] not in exclude_urls]
     items.sort(key=lambda item: (keyword_score(f"{item['title']} {item['excerpt']}", MISSION_KEYWORDS), item["posted"]), reverse=True)
     return items[:MAX_MISSION_NEWS]
 
@@ -959,6 +972,39 @@ def post_webhook(text):
     print(f"Webhook sent ({len(chunks)} message(s))")
 
 
+SEEN_PATH = "docs/data/.seen.json"
+SEEN_CAP = 1000  # カテゴリごとに保持する既出IDの上限(無制限に増え続けないように)
+
+
+def load_seen():
+    """既に掲載済みのID一覧を読み込む(カテゴリ名 -> IDリスト)。
+
+    ワイドな探索窓(ARXIV_LOOKBACK_HOURS/*_LOOKBACK_DAYS)で同じ項目を
+    何度も再取得しても、既出のものは除外して重複掲載を防ぐために使う。
+    """
+    try:
+        with open(SEEN_PATH, encoding="utf-8") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return {}
+
+
+def save_seen(seen):
+    os.makedirs("docs/data", exist_ok=True)
+    with open(SEEN_PATH, "w", encoding="utf-8") as f:
+        json.dump(seen, f, ensure_ascii=False, indent=0)
+
+
+def mark_seen(seen, category, ids):
+    ids = [i for i in ids if i]
+    if not ids:
+        return
+    bucket = seen.setdefault(category, [])
+    bucket.extend(i for i in ids if i not in bucket)
+    if len(bucket) > SEEN_CAP:
+        seen[category] = bucket[-SEEN_CAP:]
+
+
 def update_index(date_str):
     """docs/data/index.json に date_str を登録する(重複なし、新しい順)。"""
     index_path = "docs/data/index.json"
@@ -998,8 +1044,10 @@ def append_to_site(date_str, run_time, body):
         existing = ""
 
     jst = run_time.astimezone(timezone(timedelta(hours=9)))
-    block = f"**🕒 {jst.strftime('%H:%M')} JST 更新**\n\n{body}"
-    combined = block if not existing else f"{block}\n\n---\n\n{existing}"
+    # サイト側の .body .update-time がバッジ状に装飾する(daily-digest側のCSS参照)。
+    # 見出し(##)と紛れないよう、更新の境目はプレーンな "---" ではなくこの専用マーカーにする。
+    block = f'<div class="update-time">🕒 {jst.strftime("%m/%d %H:%M")} JST 更新</div>\n\n{body}'
+    combined = block if not existing else f"{block}\n\n{existing}"
 
     with open(path, "w", encoding="utf-8") as f:
         f.write(combined)
@@ -1019,6 +1067,7 @@ def generate_digest(start, end, use_index_first=True):
     ファイル更新や通知をスキップできるようにする。
     """
     include_empty_notes = (end - start) >= timedelta(hours=12)
+    seen = load_seen()
     parts = []
 
     # --- GCN 速報(失敗しても他のセクションは続行)---
@@ -1049,13 +1098,14 @@ def generate_digest(start, end, use_index_first=True):
     # --- TNS 新規天体(失敗しても他のセクションは続行)---
     if INCLUDE_TNS:
         try:
-            tns_items = fetch_tns(start, end)
+            tns_items = fetch_tns(start, end, exclude_names=set(seen.get("tns", [])))
             if tns_items:
                 print(f"TNS: {len(tns_items)} 件を掲載")
                 parts.append(
                     f"## 🔭 TNS 新規・分類天体({len(tns_items)}件)\n\n"
                     f"{format_tns(tns_items)}"
                 )
+                mark_seen(seen, "tns", [item["name"] for item in tns_items])
             elif include_empty_notes:
                 parts.append("## 🔭 TNS 新規・分類天体\n\n直近の関連天体は見つかりませんでした。")
         except Exception as e:
@@ -1081,7 +1131,7 @@ def generate_digest(start, end, use_index_first=True):
     # --- ミッション/観測所ニュース(失敗しても他のセクションは続行)---
     if INCLUDE_MISSION_NEWS:
         try:
-            mission_items = fetch_mission_news(start, end)
+            mission_items = fetch_mission_news(start, end, exclude_urls=set(seen.get("mission_news", [])))
             if mission_items:
                 print(f"ミッション/観測所ニュース: {len(mission_items)} 件を掲載")
                 try:
@@ -1093,6 +1143,7 @@ def generate_digest(start, end, use_index_first=True):
                     f"## 🛰️ ミッション・観測所ニュース({len(mission_items)}件)\n\n"
                     f"{mission_summary}"
                 )
+                mark_seen(seen, "mission_news", [item["url"] for item in mission_items])
             elif include_empty_notes:
                 parts.append("## 🛰️ ミッション・観測所ニュース\n\n直近の関連ニュースは見つかりませんでした。")
         except Exception as e:
@@ -1102,13 +1153,14 @@ def generate_digest(start, end, use_index_first=True):
     # --- 国内プレスリリース(失敗しても他のセクションは続行)---
     if INCLUDE_DOMESTIC_PRESS:
         try:
-            press_items = fetch_domestic_press(start, end)
+            press_items = fetch_domestic_press(start, end, exclude_urls=set(seen.get("press", [])))
             if press_items:
                 print(f"国内プレス: {len(press_items)} 件を掲載")
                 parts.append(
                     f"## 🇯🇵 国内X線天文・関連プレス({len(press_items)}件)\n\n"
                     f"{format_domestic_press(press_items)}"
                 )
+                mark_seen(seen, "press", [item["url"] for item in press_items])
             elif include_empty_notes:
                 parts.append("## 🇯🇵 国内X線天文・関連プレス\n\n直近の関連プレスリリースは見つかりませんでした。")
         except Exception as e:
@@ -1116,11 +1168,16 @@ def generate_digest(start, end, use_index_first=True):
             parts.append(f"## 🇯🇵 国内X線天文・関連プレス\n\n取得エラーのためスキップしました({e})")
 
     # --- arXiv 論文(失敗しても他のセクションは続行)---
+    # HOURS_BACK(通常実行では2h)そのままだと arXiv 側の索引反映の遅延や週末の
+    # 投稿空白で論文を取りこぼすため、ARXIV_LOOKBACK_HOURS まで広めに探索し、
+    # 既に掲載済みのものは exclude_ids で除外することで重複なく1日分をカバーする。
     try:
-        papers = fetch_papers(start, end)
+        arxiv_seen = set(seen.get("arxiv", []))
+        wide_start = min(start, end - timedelta(hours=ARXIV_LOOKBACK_HOURS))
+        papers = fetch_papers(wide_start, end, exclude_ids=arxiv_seen)
         paper_window = "対象期間"
         if not papers and include_empty_notes:
-            papers = fetch_papers(end - timedelta(days=7), end, max_papers=min(MAX_PAPERS, 8))
+            papers = fetch_papers(end - timedelta(days=7), end, max_papers=min(MAX_PAPERS, 8), exclude_ids=arxiv_seen)
             paper_window = "直近1週間"
         if papers:
             print(f"arXiv: {len(papers)} 件の論文を要約中...")
@@ -1134,11 +1191,14 @@ def generate_digest(start, end, use_index_first=True):
                 f"対象カテゴリ: {', '.join(CATEGORIES)}\n\n"
                 + paper_summary
             )
+            mark_seen(seen, "arxiv", [arxiv_id(p["url"]) for p in papers])
         elif include_empty_notes:
             parts.append("## 📄 arXiv 新着論文\n\n直近1週間の新着はありませんでした。")
     except Exception as e:
         print(f"arXiv セクションの生成に失敗: {e}")
         parts.append(f"## 📄 arXiv 新着論文\n\n取得エラーのためスキップしました({e})")
+
+    save_seen(seen)
 
     if not parts:
         return None

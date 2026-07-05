@@ -36,4 +36,4 @@ jobs:
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: "Update astro digest feed"
-          file_pattern: docs/data/*.md docs/data/index.json
+          file_pattern: docs/data/*.md docs/data/index.json docs/data/.seen.json
