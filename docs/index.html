@@ -39,6 +39,39 @@
   .sub{font-family:"IBM Plex Mono",monospace;font-size:11px;color:var(--ink-dim)}
 
   main{padding:20px 0 80px}
+  .calendar{
+    background:var(--surface);border:1px solid var(--line);border-radius:14px;
+    padding:14px;margin:0 16px 18px;
+  }
+  @media(min-width:672px){.calendar{margin-left:auto;margin-right:auto;max-width:640px}}
+  .calendar-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px}
+  .calendar-title{font-family:"IBM Plex Mono",monospace;font-size:13px;color:var(--gold)}
+  .calendar-controls{display:flex;align-items:center;gap:6px}
+  .calendar button{
+    border:1px solid var(--line);background:var(--surface-2);color:var(--ink);
+    border-radius:6px;min-height:32px;cursor:pointer;
+    font-family:"IBM Plex Mono",monospace;font-size:12px;
+  }
+  .calendar button:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+  .calendar-nav{width:32px;padding:0}
+  .calendar-all{padding:0 10px;color:var(--gold)}
+  .calendar-weekdays,.calendar-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:4px}
+  .calendar-weekdays{margin-bottom:4px}
+  .calendar-weekdays span{
+    text-align:center;color:var(--ink-dim);font-family:"IBM Plex Mono",monospace;
+    font-size:10px;
+  }
+  .calendar-day{
+    aspect-ratio:1;border-radius:6px;display:flex;align-items:center;justify-content:center;
+    color:var(--ink-dim);font-family:"IBM Plex Mono",monospace;font-size:12px;
+  }
+  .calendar-day.has-data{
+    color:var(--cyan);background:rgba(111,211,224,.08);border-color:rgba(111,211,224,.45);
+  }
+  .calendar-day.is-selected{
+    color:var(--gold);background:rgba(245,184,65,.14);border-color:var(--gold);
+  }
+  .calendar-day:disabled{cursor:default;opacity:.42}
   article.day{
     background:var(--surface);border:1px solid var(--line);border-radius:14px;
     padding:18px 18px 8px;margin:0 16px 22px;
@@ -119,6 +152,8 @@
   @media(min-width:980px){
     .wrap{max-width:1120px}
     header .wrap{align-items:center}
+    .calendar{max-width:1120px}
+    .calendar-grid,.calendar-weekdays{max-width:520px}
     article.day{max-width:1120px;padding:22px 24px 12px}
     .body{
       display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);
@@ -157,6 +192,20 @@
 </div></header>
 
 <main class="wrap">
+  <section class="calendar" aria-label="アーカイブカレンダー">
+    <div class="calendar-head">
+      <div class="calendar-title" id="calendarTitle">ARCHIVE</div>
+      <div class="calendar-controls">
+        <button class="calendar-nav" id="prevMonth" type="button" aria-label="前の月">‹</button>
+        <button class="calendar-nav" id="nextMonth" type="button" aria-label="次の月">›</button>
+        <button class="calendar-all" id="showAll" type="button">全期間</button>
+      </div>
+    </div>
+    <div class="calendar-weekdays" aria-hidden="true">
+      <span>Sun</span><span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span>
+    </div>
+    <div class="calendar-grid" id="calendarGrid"></div>
+  </section>
   <section id="feed" aria-live="polite">
     <p class="note" id="status">読み込み中…</p>
   </section>
@@ -164,7 +213,7 @@
 
 <script>
 const PAGE = 7; // 一度に読み込む日数
-let dates = [], cursor = 0;
+let dates = [], cursor = 0, selectedDate = null, calendarYear = null, calendarMonth = null;
 
 async function loadIndex(){
   const st = document.getElementById('status');
@@ -172,6 +221,10 @@ async function loadIndex(){
     const res = await fetch('data/index.json', {cache:'no-store'});
     dates = await res.json();
     if(!dates.length){ st.textContent = 'まだ投稿がありません。最初のダイジェストは明朝届きます。'; return; }
+    const latest = parseDateKey(dates[0]);
+    calendarYear = latest.getUTCFullYear();
+    calendarMonth = latest.getUTCMonth();
+    renderCalendar();
     st.remove();
     renderDaily();
   }catch(e){
@@ -179,10 +232,53 @@ async function loadIndex(){
   }
 }
 
+function parseDateKey(date){
+  const [y, m, d] = date.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d));
+}
+
+function formatDateKey(date){
+  return [
+    date.getUTCFullYear(),
+    String(date.getUTCMonth() + 1).padStart(2, '0'),
+    String(date.getUTCDate()).padStart(2, '0')
+  ].join('-');
+}
+
 async function fetchDigest(date){
   const res = await fetch(`data/${date}.md`, {cache:'no-store'});
   if(!res.ok) throw new Error(date);
   return res.text();
+}
+
+function renderCalendar(){
+  const available = new Set(dates);
+  const title = document.getElementById('calendarTitle');
+  const grid = document.getElementById('calendarGrid');
+  const monthStart = new Date(Date.UTC(calendarYear, calendarMonth, 1));
+  const monthEnd = new Date(Date.UTC(calendarYear, calendarMonth + 1, 0));
+  title.textContent = `${calendarYear}-${String(calendarMonth + 1).padStart(2, '0')}`;
+  grid.innerHTML = '';
+
+  for(let i = 0; i < monthStart.getUTCDay(); i++){
+    const empty = document.createElement('span');
+    empty.className = 'calendar-day';
+    grid.appendChild(empty);
+  }
+
+  for(let day = 1; day <= monthEnd.getUTCDate(); day++){
+    const current = new Date(Date.UTC(calendarYear, calendarMonth, day));
+    const key = formatDateKey(current);
+    const hasData = available.has(key);
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = `calendar-day${hasData ? ' has-data' : ''}${selectedDate === key ? ' is-selected' : ''}`;
+    button.textContent = String(day);
+    button.disabled = !hasData;
+    button.setAttribute('aria-label', hasData ? `${key} のダイジェストを表示` : `${key} はデータなし`);
+    if(hasData) button.addEventListener('click', () => renderSelectedDate(key));
+    grid.appendChild(button);
+  }
 }
 
 function clearFeed(){
@@ -292,9 +388,28 @@ function renderMarkdown(md){
 }
 
 async function renderDaily(){
+  selectedDate = null;
   cursor = 0;
   clearFeed();
+  renderCalendar();
   await loadMore();
+}
+
+async function renderSelectedDate(date){
+  selectedDate = date;
+  cursor = 0;
+  renderCalendar();
+  const feed = clearFeed();
+  try{
+    const md = await fetchDigest(date);
+    const art = document.createElement('article');
+    art.className = 'day';
+    art.innerHTML = `<div class="stamp"><span class="date">${date}</span></div>`;
+    art.appendChild(renderMarkdown(md));
+    feed.appendChild(art);
+  }catch(e){
+    feed.innerHTML = `<p class="note">${date} のダイジェストを読み込めませんでした。</p>`;
+  }
 }
 
 async function loadMore(){
@@ -321,6 +436,19 @@ async function loadMore(){
 }
 
 loadIndex();
+document.getElementById('prevMonth').addEventListener('click', () => {
+  if(calendarYear === null) return;
+  calendarMonth -= 1;
+  if(calendarMonth < 0){ calendarMonth = 11; calendarYear -= 1; }
+  renderCalendar();
+});
+document.getElementById('nextMonth').addEventListener('click', () => {
+  if(calendarYear === null) return;
+  calendarMonth += 1;
+  if(calendarMonth > 11){ calendarMonth = 0; calendarYear += 1; }
+  renderCalendar();
+});
+document.getElementById('showAll').addEventListener('click', renderDaily);
 </script>
 </body>
 </html>
