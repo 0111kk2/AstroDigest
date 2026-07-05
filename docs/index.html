@@ -36,6 +36,22 @@
   .sub{font-family:"IBM Plex Mono",monospace;font-size:11px;color:var(--ink-dim)}
 
   main{padding:20px 0 80px}
+  .views{
+    display:grid;grid-template-columns:1fr 1fr;gap:8px;
+    margin:0 16px 16px;
+  }
+  @media(min-width:672px){.views{margin-left:auto;margin-right:auto;max-width:640px}}
+  .view{
+    min-height:40px;border:1px solid var(--line);border-radius:8px;
+    background:var(--surface);color:var(--ink-dim);
+    font-family:"Noto Sans JP",sans-serif;font-size:13px;font-weight:700;
+    cursor:pointer;
+  }
+  .view[aria-selected="true"]{
+    border-color:var(--gold);color:var(--gold);
+    background:color-mix(in srgb,var(--gold) 10%,var(--surface));
+  }
+  .view:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
   article.day{
     background:var(--surface);border:1px solid var(--line);border-radius:14px;
     padding:18px 18px 8px;margin:0 16px 22px;
@@ -49,6 +65,13 @@
   .stamp .date{color:var(--gold);font-weight:500;font-size:13px}
   .stamp::before{content:"OBS LOG";border:1px solid var(--gold);color:var(--gold);
     border-radius:4px;padding:1px 6px;font-size:10px;letter-spacing:.08em}
+  .stamp.week::before{content:"7 DAYS"}
+  .week-section{border-top:1px dashed var(--line);margin-top:14px;padding-top:12px}
+  .week-section:first-child{border-top:0;margin-top:0;padding-top:0}
+  .week-date{
+    font-family:"IBM Plex Mono",monospace;font-size:12px;color:var(--gold);
+    margin:4px 0 8px;
+  }
 
   /* ダイジェスト本文(markdownから生成) */
   .body h2{font-size:15px;margin:20px 0 8px;color:var(--ink);
@@ -87,13 +110,19 @@
   <span class="sub">X-ray / transients / instruments</span>
 </div></header>
 
-<main id="feed" class="wrap" aria-live="polite">
-  <p class="note" id="status">読み込み中…</p>
+<main class="wrap">
+  <div class="views" role="tablist" aria-label="表示切り替え">
+    <button class="view" id="dailyTab" type="button" role="tab" aria-selected="true">日別</button>
+    <button class="view" id="weekTab" type="button" role="tab" aria-selected="false">1週間</button>
+  </div>
+  <section id="feed" aria-live="polite">
+    <p class="note" id="status">読み込み中…</p>
+  </section>
 </main>
 
 <script>
 const PAGE = 7; // 一度に読み込む日数
-let dates = [], cursor = 0;
+let dates = [], cursor = 0, mode = 'daily';
 
 async function loadIndex(){
   const st = document.getElementById('status');
@@ -102,10 +131,36 @@ async function loadIndex(){
     dates = await res.json();
     if(!dates.length){ st.textContent = 'まだ投稿がありません。最初のダイジェストは明朝届きます。'; return; }
     st.remove();
-    await loadMore();
+    renderDaily();
   }catch(e){
     st.textContent = 'index.json が読み込めませんでした。Actions が一度実行されるとフィードが生成されます。';
   }
+}
+
+async function fetchDigest(date){
+  const res = await fetch(`data/${date}.md`, {cache:'no-store'});
+  if(!res.ok) throw new Error(date);
+  return res.text();
+}
+
+function setMode(next){
+  mode = next;
+  document.getElementById('dailyTab').setAttribute('aria-selected', String(mode === 'daily'));
+  document.getElementById('weekTab').setAttribute('aria-selected', String(mode === 'week'));
+  if(mode === 'daily') renderDaily();
+  else renderWeek();
+}
+
+function clearFeed(){
+  const feed = document.getElementById('feed');
+  feed.innerHTML = '';
+  return feed;
+}
+
+async function renderDaily(){
+  cursor = 0;
+  clearFeed();
+  await loadMore();
 }
 
 async function loadMore(){
@@ -114,7 +169,7 @@ async function loadMore(){
   cursor += slice.length;
   for(const d of slice){
     try{
-      const md = await (await fetch(`data/${d}.md`, {cache:'no-store'})).text();
+      const md = await fetchDigest(d);
       const art = document.createElement('article');
       art.className = 'day';
       art.innerHTML = `<div class="stamp"><span class="date">${d}</span></div>
@@ -130,6 +185,30 @@ async function loadMore(){
     feed.appendChild(b);
   }
 }
+
+async function renderWeek(){
+  const feed = clearFeed();
+  const week = dates.slice(0, 7);
+  const art = document.createElement('article');
+  art.className = 'day';
+  art.innerHTML = `<div class="stamp week"><span class="date">${week[week.length - 1]} - ${week[0]}</span></div>
+                   <div class="body" id="weekBody"></div>`;
+  feed.appendChild(art);
+
+  const body = document.getElementById('weekBody');
+  for(const d of week){
+    try{
+      const md = await fetchDigest(d);
+      const section = document.createElement('section');
+      section.className = 'week-section';
+      section.innerHTML = `<div class="week-date">${d}</div>${marked.parse(md)}`;
+      body.appendChild(section);
+    }catch(e){ /* 個別の欠損はスキップ */ }
+  }
+}
+
+document.getElementById('dailyTab').addEventListener('click', () => setMode('daily'));
+document.getElementById('weekTab').addEventListener('click', () => setMode('week'));
 loadIndex();
 </script>
 </body>
