@@ -189,13 +189,26 @@ def group_by_event(circulars):
     return groups
 
 
-def format_gcn_source_links(groups):
-    lines = []
+def attach_gcn_source_links(summary, groups):
+    result = summary
+    unmatched = []
     for event, circs in groups.items():
-        lines.append(f"- **{event}**")
-        for c in circs:
-            lines.append(f"  - [GCN {c['id']}: {c['subject']}]({c['url']})")
-    return "\n".join(lines)
+        links = " / ".join(
+            f"[GCN {c['id']}: {c['subject']}]({c['url']})"
+            for c in circs
+        )
+        source_line = f"原文: {links}"
+        pattern = re.compile(rf"^(###\s*{re.escape(event)}[^\n]*)$", flags=re.M)
+        result, count = pattern.subn(rf"\1\n{source_line}", result, count=1)
+        if count == 0:
+            unmatched.append((event, source_line))
+
+    if unmatched:
+        result += "\n\n### GCN 原文リンク\n\n" + "\n".join(
+            f"- **{event}**: {source_line.removeprefix('原文: ')}"
+            for event, source_line in unmatched
+        )
+    return result
 
 
 # ---------------------------------------------------------------- LLM 呼び出し
@@ -257,6 +270,7 @@ def summarize_papers(papers):
         "各論文のアブストラクトを読み、日本語で構造化してください。\n\n"
         "次の JSON のみを出力してください(前置きや ``` は不要):\n"
         '{"papers": [{"n": 1, "purpose": "目的(1文)", '
+        '"abstract_jp": "アブストラクト全体の日本語要約(3〜4文)", '
         '"content": "どんなデータ・手法で何を議論しているか(1〜2文)", '
         '"conclusion": "何が分かったか・主な主張(1〜2文)"}, ...], '
         '"highlight": "今日のハイライト: 特に注目すべき論文1〜2本とその理由(2〜3文)"}\n\n'
@@ -264,7 +278,7 @@ def summarize_papers(papers):
         "アブストラクトに書かれていないことは推測で補わないでください。\n\n"
         f"{paper_text}"
     )
-    raw = call_llm(prompt, max_tokens=6000)
+    raw = call_llm(prompt, max_tokens=10000)
 
     try:
         data = parse_llm_json(raw)
@@ -279,10 +293,9 @@ def summarize_papers(papers):
         blocks.append(
             f"### {i+1}. [{p['title']}]({p['url']})\n"
             f"- **目的**: {s.get('purpose', '(生成失敗)')}\n"
+            f"- **アブストラクト**: {s.get('abstract_jp', s.get('content', ''))}\n"
             f"- **内容**: {s.get('content', '')}\n"
-            f"- **結論**: {s.get('conclusion', '')}\n"
-            f"<details><summary>アブストラクト(原文)</summary>\n\n"
-            f"{p['abstract']}\n\n</details>"
+            f"- **結論**: {s.get('conclusion', '')}"
         )
     if data.get("highlight"):
         blocks.append(f"**🌟 {data['highlight']}**")
@@ -309,8 +322,7 @@ def format_paper_fallback(papers):
             f"### {i+1}. [{p['title']}]({p['url']})\n"
             f"- **著者**: {', '.join(p['authors'][:6])}{' ほか' if len(p['authors']) > 6 else ''}\n"
             f"- **カテゴリ**: {', '.join(p['categories'])}\n"
-            f"<details><summary>アブストラクト(原文)</summary>\n\n"
-            f"{p['abstract']}\n\n</details>"
+            f"- **アブストラクト**: 自動要約に失敗したため、arXivリンク先を確認してください。"
         )
     return "\n\n".join(blocks)
 
@@ -404,12 +416,10 @@ def main():
             if circulars:
                 groups = group_by_event(circulars)
                 print(f"GCN: {len(circulars)} 報 / {len(groups)} イベントを要約中...")
-                gcn_summary = summarize_gcn(groups)
+                gcn_summary = attach_gcn_source_links(summarize_gcn(groups), groups)
                 parts.append(
                     f"## 🚨 新天体・トランジェント速報(GCN {len(circulars)}報 / {len(groups)}イベント)\n\n"
-                    f"{gcn_summary}\n\n"
-                    f"### GCN 原文リンク\n\n"
-                    f"{format_gcn_source_links(groups)}"
+                    f"{gcn_summary}"
                 )
             else:
                 parts.append("## 🚨 新天体・トランジェント速報\n\n直近24時間の GCN Circular はありませんでした。")
