@@ -85,6 +85,21 @@
   .calendar-day:disabled{cursor:default;opacity:.42}
   .calendar.is-collapsed .calendar-body{display:none}
   .calendar.is-collapsed .calendar-head{margin-bottom:0}
+  .feed-switcher{
+    display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;
+    margin:0 16px 18px;
+  }
+  @media(min-width:672px){.feed-switcher{margin-left:auto;margin-right:auto;max-width:640px}}
+  .feed-tab{
+    min-height:38px;border:1px solid var(--line);border-radius:8px;
+    background:var(--surface);color:var(--ink-dim);cursor:pointer;
+    font-family:"IBM Plex Mono",monospace;font-size:12px;font-weight:500;
+  }
+  .feed-tab.is-active{
+    color:var(--gold);border-color:var(--gold);
+    background:rgba(245,184,65,.08);
+  }
+  .feed-tab:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
   article.day{
     background:var(--surface);border:1px solid var(--line);border-radius:14px;
     padding:18px 18px 8px;margin:0 16px 22px;
@@ -144,7 +159,9 @@
   }
   .digest-section.gcn > h2{border-color:rgba(255,106,106,.42);color:#ff9a9a}
   .digest-section.atel > h2{border-color:rgba(111,211,224,.52);color:var(--cyan)}
+  .digest-section.tns > h2{border-color:rgba(194,148,255,.52);color:#c294ff}
   .digest-section.arxiv > h2{border-color:rgba(245,184,65,.5);color:var(--gold)}
+  .digest-section.mission > h2{border-color:rgba(120,214,154,.5);color:#78d69a}
   .digest-section.press > h2{border-color:rgba(120,214,154,.5);color:#78d69a}
   .digest-item{
     position:relative;border:1px solid rgba(255,255,255,.08);border-radius:10px;
@@ -159,8 +176,12 @@
   .digest-section.gcn .digest-item::before{background:#ff7676}
   .digest-section.atel .digest-item{border-left:3px solid var(--cyan)}
   .digest-section.atel .digest-item::before{background:var(--cyan)}
+  .digest-section.tns .digest-item{border-left:3px solid #c294ff}
+  .digest-section.tns .digest-item::before{background:#c294ff}
   .digest-section.arxiv .digest-item{border-left:3px solid var(--gold)}
   .digest-section.arxiv .digest-item::before{background:var(--gold)}
+  .digest-section.mission .digest-item{border-left:3px solid #78d69a}
+  .digest-section.mission .digest-item::before{background:#78d69a}
   .digest-section.press .digest-item{border-left:3px solid #78d69a}
   .digest-section.press .digest-item::before{background:#78d69a}
   .digest-item h3{margin-top:0}
@@ -189,6 +210,7 @@
     .wrap{max-width:1120px}
     header .wrap{align-items:center}
     .calendar{max-width:1120px}
+    .feed-switcher{max-width:760px}
     .calendar-grid,.calendar-weekdays{max-width:520px}
     article.day{max-width:1120px;padding:22px 24px 12px}
     .body{display:block;max-width:760px;margin:0 auto}
@@ -232,6 +254,11 @@
       <div class="calendar-grid" id="calendarGrid"></div>
     </div>
   </section>
+  <nav class="feed-switcher" aria-label="表示する情報">
+    <button class="feed-tab is-active" type="button" data-feed-filter="transients">新天体</button>
+    <button class="feed-tab" type="button" data-feed-filter="press">プレス</button>
+    <button class="feed-tab" type="button" data-feed-filter="papers">論文</button>
+  </nav>
   <section id="feed" aria-live="polite">
     <p class="note" id="status">読み込み中…</p>
   </section>
@@ -239,7 +266,12 @@
 
 <script>
 const PAGE = 7; // 一度に読み込む日数
-let dates = [], cursor = 0, selectedDate = null, calendarYear = null, calendarMonth = null;
+let dates = [], cursor = 0, selectedDate = null, calendarYear = null, calendarMonth = null, activeFeed = 'transients';
+const FEED_SECTIONS = {
+  transients: ['gcn', 'atel', 'tns'],
+  press: ['press', 'mission'],
+  papers: ['arxiv']
+};
 
 async function loadIndex(){
   const st = document.getElementById('status');
@@ -334,6 +366,8 @@ function enhanceDigest(body){
     section.className = 'digest-section';
     if(text.includes('GCN')) section.classList.add('gcn');
     else if(text.includes('ATel')) section.classList.add('atel');
+    else if(text.includes('TNS')) section.classList.add('tns');
+    else if(text.includes('ミッション') || text.includes('観測所')) section.classList.add('mission');
     else if(text.includes('国内')) section.classList.add('press');
     else if(text.includes('arXiv')) section.classList.add('arxiv');
     h2.parentNode.insertBefore(section, h2);
@@ -350,6 +384,8 @@ function enhanceDigest(body){
     note.className = 'section-note';
     if(section.classList.contains('gcn')) note.textContent = 'GCN Circulars / event grouped';
     else if(section.classList.contains('atel')) note.textContent = 'Astronomer’s Telegram / post based';
+    else if(section.classList.contains('tns')) note.textContent = 'Transient Name Server / object list';
+    else if(section.classList.contains('mission')) note.textContent = 'Mission and observatory news / keyword filtered';
     else if(section.classList.contains('press')) note.textContent = 'Japan press releases / keyword filtered';
     else if(section.classList.contains('arxiv')) note.textContent = 'arXiv papers / abstract first';
     if(note.textContent) h2.insertAdjacentElement('afterend', note);
@@ -424,6 +460,40 @@ function renderMarkdown(md){
   return body;
 }
 
+function applyFeedFilter(){
+  const allowed = FEED_SECTIONS[activeFeed] || FEED_SECTIONS.transients;
+  document.querySelectorAll('.feed-tab').forEach(button => {
+    const active = button.dataset.feedFilter === activeFeed;
+    button.classList.toggle('is-active', active);
+    button.setAttribute('aria-pressed', String(active));
+  });
+
+  for(const article of document.querySelectorAll('article.day')){
+    let hasVisibleBlock = false;
+    for(const block of article.querySelectorAll('.update-block')){
+      let hasVisibleSection = false;
+      for(const section of block.querySelectorAll('.digest-section')){
+        const visible = allowed.some(name => section.classList.contains(name));
+        section.hidden = !visible;
+        if(visible) hasVisibleSection = true;
+      }
+      block.hidden = !hasVisibleSection;
+      if(hasVisibleSection) hasVisibleBlock = true;
+    }
+    let empty = article.querySelector('.feed-empty');
+    if(!hasVisibleBlock){
+      if(!empty){
+        empty = document.createElement('p');
+        empty.className = 'note feed-empty';
+        article.appendChild(empty);
+      }
+      empty.textContent = 'このカテゴリの更新はまだありません。';
+    }else if(empty){
+      empty.remove();
+    }
+  }
+}
+
 async function renderDaily(){
   selectedDate = null;
   cursor = 0;
@@ -444,6 +514,7 @@ async function renderSelectedDate(date){
     art.innerHTML = `<div class="stamp"><span class="date">${date}</span></div>`;
     art.appendChild(renderMarkdown(md));
     feed.appendChild(art);
+    applyFeedFilter();
   }catch(e){
     feed.innerHTML = `<p class="note">${date} のダイジェストを読み込めませんでした。</p>`;
   }
@@ -461,6 +532,7 @@ async function loadMore(){
       art.innerHTML = `<div class="stamp"><span class="date">${d}</span></div>`;
       art.appendChild(renderMarkdown(md));
       feed.appendChild(art);
+      applyFeedFilter();
     }catch(e){ /* 個別の欠損はスキップ */ }
   }
   const old = document.getElementById('more'); if(old) old.remove();
@@ -490,6 +562,12 @@ document.getElementById('calendarToggle').addEventListener('click', () => {
   const calendar = document.querySelector('.calendar');
   const collapsed = calendar.classList.toggle('is-collapsed');
   document.getElementById('calendarToggle').setAttribute('aria-expanded', String(!collapsed));
+});
+document.querySelectorAll('.feed-tab').forEach(button => {
+  button.addEventListener('click', () => {
+    activeFeed = button.dataset.feedFilter;
+    applyFeedFilter();
+  });
 });
 </script>
 </body>
