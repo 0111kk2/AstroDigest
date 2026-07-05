@@ -219,10 +219,12 @@ def fetch_circulars(start, end, use_index_first=True):
 
 
 def normalize_circular(data):
+    created = datetime.fromtimestamp(data["createdOn"] / 1000, tz=timezone.utc)
     return {
         "id": data["circularId"],
         "subject": data["subject"],
         "event": data.get("eventId") or "(その他)",
+        "created": created.strftime("%Y-%m-%d %H:%M UT"),
         "body": data["body"][:GCN_BODY_TRUNCATE],
         "url": f"{GCN_BASE}/circulars/{data['circularId']}",
     }
@@ -873,7 +875,7 @@ def summarize_gcn(groups):
     sections = []
     for event, circs in groups.items():
         entries = "\n".join(
-            f"- GCN {c['id']}: {c['subject']}\n  本文抜粋: {c['body']}"
+            f"- GCN {c['id']}: {c['subject']}\n  掲載: {c.get('created', '不明')}\n  本文抜粋: {c['body']}"
             for c in circs
         )
         sections.append(f"■ イベント: {event}({len(circs)}報)\n{entries}")
@@ -886,6 +888,7 @@ def summarize_gcn(groups):
         "3. 追観測の状況(どの装置・波長で何が見えた/見えなかったか)\n\n"
         "出力形式(Markdown):\n"
         "### イベント名(速報N報)\n"
+        "- **掲載**: YYYY-MM-DD HH:MM UT (複数報ある場合は最新報の時刻)\n"
         "まとめ本文(3〜5文)\n\n"
         "重要度が高い順(新発見・多波長で追観測が活発なものが上)に並べてください。"
         "定常的な誤検出報告(flaring star 等)は最後に1行でまとめて構いません。\n\n"
@@ -901,6 +904,7 @@ def format_gcn_fallback(groups):
             f"[GCN {c['id']}: {c['subject']}]({c['url']})"
             for c in circs
         )
+        latest = max((c.get("created", "") for c in circs), default="不明")
         bullets = []
         for c in circs[:5]:
             body = clean_html_text(c["body"])[:280]
@@ -910,6 +914,7 @@ def format_gcn_fallback(groups):
         blocks.append(
             f"### {event}({len(circs)}報)\n"
             f"原文: {links}\n"
+            f"- **掲載**: {latest}\n"
             + "\n".join(bullets)
         )
     return "\n\n".join(blocks)
@@ -933,6 +938,7 @@ def summarize_atels(atels):
         "出力形式を厳守してください。前置きや ``` は不要です。\n"
         "### ATel #番号: タイトル\n"
         "原文: [ATel #番号](URL)\n"
+        "- **掲載**: YYYY-MM-DD HH:MM UT\n"
         "本文(2〜4文。「まとめ本文:」のようなラベルは付けない)\n\n"
         "本文未取得の項目は、タイトル・著者・投稿時刻から分かる範囲だけを書き、"
         "観測結果や数値を推測で補わないでください。"

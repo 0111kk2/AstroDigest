@@ -175,18 +175,36 @@
     border:2px solid var(--bg);
   }
   .digest-section.gcn .digest-item{border-left:3px solid #ff7676}
+  .digest-item.gcn{border-left:3px solid #ff7676}
   .digest-section.gcn .digest-item::before{background:#ff7676}
+  .digest-item.gcn::before{background:#ff7676}
   .digest-section.atel .digest-item{border-left:3px solid var(--cyan)}
+  .digest-item.atel{border-left:3px solid var(--cyan)}
   .digest-section.atel .digest-item::before{background:var(--cyan)}
+  .digest-item.atel::before{background:var(--cyan)}
   .digest-section.tns .digest-item{border-left:3px solid #c294ff}
+  .digest-item.tns{border-left:3px solid #c294ff}
   .digest-section.tns .digest-item::before{background:#c294ff}
+  .digest-item.tns::before{background:#c294ff}
   .digest-section.arxiv .digest-item{border-left:3px solid var(--gold)}
+  .digest-item.arxiv{border-left:3px solid var(--gold)}
   .digest-section.arxiv .digest-item::before{background:var(--gold)}
+  .digest-item.arxiv::before{background:var(--gold)}
   .digest-section.mission .digest-item{border-left:3px solid #78d69a}
+  .digest-item.mission{border-left:3px solid #78d69a}
   .digest-section.mission .digest-item::before{background:#78d69a}
+  .digest-item.mission::before{background:#78d69a}
   .digest-section.press .digest-item{border-left:3px solid #78d69a}
+  .digest-item.press{border-left:3px solid #78d69a}
   .digest-section.press .digest-item::before{background:#78d69a}
+  .digest-item.press::before{background:#78d69a}
   .digest-item h3{margin-top:0}
+  .body.is-source{display:none}
+  .timeline-view{position:relative;margin:18px 0 26px;padding-left:18px}
+  .timeline-view::before{
+    content:"";position:absolute;left:4px;top:8px;bottom:8px;
+    width:1px;background:var(--line);
+  }
   .source-line{
     font-family:"IBM Plex Mono",monospace;font-size:12px;line-height:1.55;
     color:var(--ink-dim);background:rgba(0,0,0,.16);
@@ -198,6 +216,10 @@
     margin:0 0 9px;padding:2px 8px;border:1px solid rgba(245,184,65,.44);
     border-radius:999px;background:rgba(245,184,65,.08);color:var(--gold);
     font-family:"IBM Plex Mono",monospace;font-size:11px;line-height:1.6;
+  }
+  .acquired-time{
+    margin:0 0 6px;color:var(--ink-dim);
+    font-family:"IBM Plex Mono",monospace;font-size:10.5px;line-height:1.5;
   }
   .section-note{
     display:none;
@@ -345,8 +367,8 @@ function renderCalendar(){
     button.className = `calendar-day${hasData ? ' has-data' : ''}${selectedDate === key ? ' is-selected' : ''}`;
     button.textContent = String(day);
     button.disabled = !hasData;
-    button.setAttribute('aria-label', hasData ? `${key} へジャンプ` : `${key} はデータなし`);
-    if(hasData) button.addEventListener('click', () => jumpToDate(key));
+    button.setAttribute('aria-label', hasData ? `${key} の取得ログを表示` : `${key} はデータなし`);
+    if(hasData) button.addEventListener('click', () => renderSelectedDate(key));
     grid.appendChild(button);
   }
 }
@@ -404,9 +426,14 @@ function enhanceDigest(body){
   }
 
   for(const section of body.querySelectorAll('.digest-section')){
+    const category = [...section.classList].find(name => ['gcn','atel','tns','mission','press','arxiv'].includes(name)) || '';
     for(const h3 of [...section.querySelectorAll('h3')]){
       const item = document.createElement('section');
       item.className = 'digest-item';
+      if(category){
+        item.classList.add(category);
+        item.dataset.category = category;
+      }
       h3.parentNode.insertBefore(item, h3);
       let node = h3;
       while(node){
@@ -426,6 +453,7 @@ function enhanceDigest(body){
       const badge = document.createElement('div');
       badge.className = 'published-time';
       badge.textContent = `🕒 ${match[1]} 掲載`;
+      item.dataset.published = match[1].trim();
       li.replaceWith(badge);
       break;
     }
@@ -474,6 +502,16 @@ function groupUpdateBlocks(body){
   }
 }
 
+function annotateAcquiredTimes(body){
+  for(const block of body.querySelectorAll('.update-block')){
+    const update = block.querySelector('.update-time');
+    const acquired = update ? update.textContent.trim() : '';
+    for(const item of block.querySelectorAll('.digest-item')){
+      item.dataset.acquired = acquired;
+    }
+  }
+}
+
 function renderMarkdown(md){
   const body = document.createElement('div');
   body.className = 'body';
@@ -481,8 +519,64 @@ function renderMarkdown(md){
   normalizeUpdateMarkers(body);
   enhanceDigest(body);
   groupUpdateBlocks(body);
+  annotateAcquiredTimes(body);
   renderMath(body);
   return body;
+}
+
+function dateSortValue(value){
+  const match = (value || '').match(/(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2}))?/);
+  if(!match) return 0;
+  const [, y, m, d, hh = '00', mm = '00'] = match;
+  return Date.UTC(Number(y), Number(m) - 1, Number(d), Number(hh), Number(mm));
+}
+
+function acquiredSortValue(value, articleDate){
+  const match = (value || '').match(/(\d{2})\/(\d{2})\s+(\d{2}):(\d{2})/);
+  if(!match) return dateSortValue(articleDate);
+  const year = Number((articleDate || '').slice(0, 4)) || new Date().getUTCFullYear();
+  const [, m, d, hh, mm] = match;
+  return Date.UTC(year, Number(m) - 1, Number(d), Number(hh), Number(mm));
+}
+
+function buildArticleTimeline(article, allowed){
+  const source = article.querySelector('.body');
+  if(!source) return false;
+  source.classList.add('is-source');
+
+  let timeline = article.querySelector('.timeline-view');
+  if(!timeline){
+    timeline = document.createElement('div');
+    timeline.className = 'timeline-view';
+    source.insertAdjacentElement('afterend', timeline);
+  }
+  timeline.innerHTML = '';
+
+  const items = [...source.querySelectorAll('.digest-item')]
+    .filter(item => allowed.includes(item.dataset.category))
+    .map((item, order) => ({
+      item,
+      order,
+      publishedSort: dateSortValue(item.dataset.published),
+      acquiredSort: acquiredSortValue(item.dataset.acquired, article.dataset.date),
+    }))
+    .sort((a, b) =>
+      (b.publishedSort - a.publishedSort) ||
+      (b.acquiredSort - a.acquiredSort) ||
+      (a.order - b.order)
+    );
+
+  for(const entry of items){
+    const clone = entry.item.cloneNode(true);
+    if(entry.item.dataset.acquired){
+      const acquired = document.createElement('div');
+      acquired.className = 'acquired-time';
+      acquired.textContent = `${entry.item.dataset.acquired.replace(/^🕒\s*/, '')} に取得`;
+      clone.insertBefore(acquired, clone.firstChild);
+    }
+    timeline.appendChild(clone);
+  }
+  return items.length > 0;
 }
 
 function applyFeedFilter(){
@@ -494,17 +588,7 @@ function applyFeedFilter(){
   });
 
   for(const article of document.querySelectorAll('article.day')){
-    let hasVisibleBlock = false;
-    for(const block of article.querySelectorAll('.update-block')){
-      let hasVisibleSection = false;
-      for(const section of block.querySelectorAll('.digest-section')){
-        const visible = allowed.some(name => section.classList.contains(name));
-        section.hidden = !visible;
-        if(visible) hasVisibleSection = true;
-      }
-      block.hidden = !hasVisibleSection;
-      if(hasVisibleSection) hasVisibleBlock = true;
-    }
+    const hasVisibleBlock = buildArticleTimeline(article, allowed);
     let empty = article.querySelector('.feed-empty');
     if(!hasVisibleBlock){
       if(!empty){
@@ -527,23 +611,23 @@ async function renderDaily(){
   await loadMore();
 }
 
-async function ensureDateLoaded(date){
-  while(!document.getElementById(dateArticleId(date)) && cursor < dates.length){
-    await loadMore();
-  }
-}
-
-async function jumpToDate(date){
+async function renderSelectedDate(date){
   selectedDate = date;
+  cursor = 0;
   renderCalendar();
-  await ensureDateLoaded(date);
-  const target = document.getElementById(dateArticleId(date));
-  if(target){
-    document.querySelectorAll('article.day.is-jump-target').forEach(node => {
-      node.classList.remove('is-jump-target');
-    });
-    target.classList.add('is-jump-target');
-    target.scrollIntoView({behavior:'smooth', block:'start'});
+  const feed = clearFeed();
+  try{
+    const md = await fetchDigest(date);
+    const art = document.createElement('article');
+    art.className = 'day is-jump-target';
+    art.id = dateArticleId(date);
+    art.dataset.date = date;
+    art.innerHTML = `<div class="stamp"><span class="date">${date}</span></div>`;
+    art.appendChild(renderMarkdown(md));
+    feed.appendChild(art);
+    applyFeedFilter();
+  }catch(e){
+    feed.innerHTML = `<p class="note">${date} の取得ログを読み込めませんでした。</p>`;
   }
 }
 
@@ -557,6 +641,7 @@ async function loadMore(){
       const art = document.createElement('article');
       art.className = 'day';
       art.id = dateArticleId(d);
+      art.dataset.date = d;
       art.innerHTML = `<div class="stamp"><span class="date">${d}</span></div>`;
       art.appendChild(renderMarkdown(md));
       feed.appendChild(art);
