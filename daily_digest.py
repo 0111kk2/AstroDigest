@@ -267,7 +267,7 @@ def summarize_papers(papers):
     raw = call_llm(prompt, max_tokens=6000)
 
     try:
-        data = json.loads(re.sub(r"```(?:json)?|```", "", raw).strip())
+        data = parse_llm_json(raw)
         by_n = {item["n"]: item for item in data["papers"]}
     except Exception as e:
         print(f"JSON パース失敗、簡易一覧で出力します: {e}")
@@ -287,6 +287,19 @@ def summarize_papers(papers):
     if data.get("highlight"):
         blocks.append(f"**🌟 {data['highlight']}**")
     return "\n\n".join(blocks)
+
+
+def parse_llm_json(raw):
+    text = re.sub(r"```(?:json)?|```", "", raw).strip()
+    match = re.search(r"\{.*\}", text, flags=re.S)
+    if match:
+        text = match.group(0)
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        # Gemini can emit LaTeX-style backslashes inside JSON strings.
+        text = re.sub(r'\\(?!["\\/bfnrtu])', r"\\\\", text)
+        return json.loads(text)
 
 
 def format_paper_fallback(papers):
