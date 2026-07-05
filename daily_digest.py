@@ -532,10 +532,17 @@ def fetch_tns(start, end):
             "type": obj_type,
             "ra": row.get("RA", "").strip(),
             "dec": row.get("DEC", "").strip(),
+            "redshift": row.get("Redshift", "").strip(),
+            "host": row.get("Host Name", "").strip(),
+            "host_redshift": row.get("Host Redshift", "").strip(),
             "mag": row.get("Discovery Mag/Flux", "").strip(),
             "filt": row.get("Discovery Filter", "").strip(),
             "posted": discovered,
             "source": row.get("Discovery Data Source/s", "").strip() or row.get("Reporting Group/s", "").strip(),
+            "reporting_group": row.get("Reporting Group/s", "").strip(),
+            "instrument": row.get("Disc. Instrument/s", "").strip(),
+            "sender": row.get("Sender", "").strip(),
+            "remarks": clean_html_text(row.get("Remarks", ""))[:220],
             "url": tns_object_url(name),
         })
         if len(items) >= MAX_TNS:
@@ -553,12 +560,30 @@ def format_tns(items):
         if item["source"]:
             meta.append(item["source"])
         coords = f"{item['ra']} {item['dec']}".strip()
+        host = item["host"] or "未記載"
+        redshift = item["redshift"] or item["host_redshift"] or "未記載"
+        discovery = []
+        if item["reporting_group"]:
+            discovery.append(f"報告グループ: {item['reporting_group']}")
+        if item["instrument"]:
+            discovery.append(f"発見装置: {item['instrument']}")
+        if item["sender"]:
+            discovery.append(f"投稿者: {item['sender']}")
+        description = (
+            f"{item['name']} は {item['posted'].strftime('%Y-%m-%d')} にTNSへ登録された "
+            f"{item['type']} 候補/分類天体です。"
+            f"発見時の明るさは {item['mag'] or '未記載'}"
+            f"{(' ' + item['filt']) if item['mag'] and item['filt'] else ''}、"
+            f"座標は {coords or '未記載'}、ホスト天体は {host}、赤方偏移は {redshift} です。"
+        )
         blocks.append(
             f"### {item['name']}\n"
             f"原文: [TNS]({item['url']})\n"
             f"- **日付**: {item['posted'].strftime('%Y-%m-%d')}\n"
             f"- **種別**: {' / '.join(meta)}\n"
-            f"- **座標**: {coords or 'TNSを確認'}"
+            f"- **概要**: {description}\n"
+            f"- **発見情報**: {' / '.join(discovery) if discovery else 'TNSを確認'}"
+            + (f"\n- **備考**: {item['remarks']}" if item["remarks"] else "")
         )
     return "\n\n".join(blocks)
 
@@ -655,9 +680,32 @@ def format_mission_news(items):
             f"### {item['title']}\n"
             f"原文: [{item['source']}]({item['url']})\n"
             f"- **日付**: {item['posted'].strftime('%Y-%m-%d')}\n"
-            f"- **抜粋**: {item['excerpt'] or '原文ページを確認してください。'}"
+            f"- **概要**: {item['excerpt'] or '原文ページを確認してください。'}"
         )
     return "\n\n".join(blocks)
+
+
+def summarize_mission_news(items):
+    sections = []
+    for item in items:
+        sections.append(
+            f"[{item['source']}] {item['title']}\n"
+            f"日付: {item['posted'].strftime('%Y-%m-%d')}\n"
+            f"URL: {item['url']}\n"
+            f"本文抜粋: {item['excerpt'] or '抜粋なし'}"
+        )
+    prompt = (
+        "以下はミッション・観測所のニュースです。日本語Markdownで、原文リンクを保ったまま要点をまとめてください。\n\n"
+        "出力形式を厳守してください。前置きや ``` は不要です。\n"
+        "### タイトル\n"
+        "原文: [情報源](URL)\n"
+        "- **日付**: YYYY-MM-DD\n"
+        "- **概要**: 自然な日本語で2〜3文。英語の直訳調を避け、X線・高エネルギー天文として何が重要かを分かる範囲で書く。\n\n"
+        "原文抜粋に書かれていない観測結果や数値は推測しないでください。\n\n"
+        + "\n\n".join(sections)
+    )
+    raw = call_llm(prompt, max_tokens=5000)
+    return re.sub(r"```(?:markdown)?|```", "", raw).strip()
 
 
 def group_by_event(circulars):
@@ -990,9 +1038,14 @@ def generate_digest(start, end, use_index_first=True):
             mission_items = fetch_mission_news(start, end)
             if mission_items:
                 print(f"ミッション/観測所ニュース: {len(mission_items)} 件を掲載")
+                try:
+                    mission_summary = summarize_mission_news(mission_items)
+                except Exception as e:
+                    print(f"ミッション/観測所ニュース要約に失敗、原文抜粋表示にします: {e}")
+                    mission_summary = format_mission_news(mission_items)
                 parts.append(
                     f"## 🛰️ ミッション・観測所ニュース({len(mission_items)}件)\n\n"
-                    f"{format_mission_news(mission_items)}"
+                    f"{mission_summary}"
                 )
             else:
                 parts.append("## 🛰️ ミッション・観測所ニュース\n\n直近の関連ニュースは見つかりませんでした。")
