@@ -262,45 +262,28 @@ def _call_claude(prompt, max_tokens):
 
 def summarize_papers(papers):
     paper_text = "\n\n".join(
-        f"[{i+1}] タイトル: {p['title']}\nアブストラクト: {p['abstract']}"
+        f"[{i+1}] タイトル: {p['title']}\nURL: {p['url']}\nアブストラクト: {p['abstract']}"
         for i, p in enumerate(papers)
     )
     prompt = (
         "以下は本日 arXiv に投稿された論文の一覧です。"
-        "各論文のアブストラクトを読み、日本語で構造化してください。\n\n"
-        "次の JSON のみを出力してください(前置きや ``` は不要):\n"
-        '{"papers": [{"n": 1, "purpose": "目的(1文)", '
-        '"abstract_jp": "アブストラクト全体の日本語要約(3〜4文)", '
-        '"content": "どんなデータ・手法で何を議論しているか(1〜2文)", '
-        '"conclusion": "何が分かったか・主な主張(1〜2文)"}, ...], '
-        '"highlight": "今日のハイライト: 特に注目すべき論文1〜2本とその理由(2〜3文)"}\n\n'
+        "各論文のアブストラクトを読み、日本語Markdownで構造化してください。\n\n"
+        "出力形式を厳守してください。前置きや ``` は不要です。\n"
+        "最初に必ず今日のハイライトを書き、その後に各論文を書いてください。\n\n"
+        "**🌟 今日のハイライト: 特に注目すべき論文1〜2本とその理由(2〜3文)**\n\n"
+        "### 1. 論文タイトル\n"
+        "元論文: [arXiv](URL)\n"
+        "- **目的**: 目的(1文)\n"
+        "- **アブストラクト**: アブストラクト全体の日本語要約(3〜4文)\n"
+        "- **内容**: どんなデータ・手法で何を議論しているか(1〜2文)\n"
+        "- **結論**: 何が分かったか・主な主張(1〜2文)\n\n"
+        "この形式で全論文を番号順に出してください。\n"
         "専門用語は無理に訳さず残してください(例: QPO、ハードステート)。"
         "アブストラクトに書かれていないことは推測で補わないでください。\n\n"
         f"{paper_text}"
     )
     raw = call_llm(prompt, max_tokens=10000)
-
-    try:
-        data = parse_llm_json(raw)
-        by_n = {item["n"]: item for item in data["papers"]}
-    except Exception as e:
-        print(f"JSON パース失敗、簡易一覧で出力します: {e}")
-        return format_paper_fallback(papers)
-
-    blocks = []
-    if data.get("highlight"):
-        blocks.append(f"**🌟 {data['highlight']}**")
-    for i, p in enumerate(papers):
-        s = by_n.get(i + 1, {})
-        blocks.append(
-            f"### {i+1}. {p['title']}\n"
-            f"元論文: [arXiv]({p['url']})\n"
-            f"- **目的**: {s.get('purpose', '(生成失敗)')}\n"
-            f"- **アブストラクト**: {s.get('abstract_jp', s.get('content', ''))}\n"
-            f"- **内容**: {s.get('content', '')}\n"
-            f"- **結論**: {s.get('conclusion', '')}"
-        )
-    return "\n\n".join(blocks)
+    return re.sub(r"```(?:markdown)?|```", "", raw).strip()
 
 
 def parse_llm_json(raw):
