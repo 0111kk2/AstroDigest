@@ -1,7 +1,8 @@
 {
 "mission_news": [
 "https://www.nustar.caltech.edu/news/nustar260703",
-"https://science.nasa.gov/blogs/swift/2026/07/03/teams-make-contact-with-spacecraft-set-to-boost-nasas-swift/"
+"https://science.nasa.gov/blogs/swift/2026/07/03/teams-make-contact-with-spacecraft-set-to-boost-nasas-swift/",
+"https://science.nasa.gov/astrophysics/programs/physics-of-the-cosmos/community/xr-sig-seminar-10-july-2026/"
 ],
 "press": [
 "https://www.isas.jaxa.jp/topics/004288.html"
@@ -129,7 +130,22 @@
 "2606.31228",
 "2606.31111",
 "2606.30936",
-"2606.30839"
+"2606.30839",
+"2606.30796",
+"2606.30763",
+"2606.30753",
+"2606.30721",
+"2606.30711",
+"2606.30620",
+"2606.30594",
+"2607.02429",
+"2607.02253",
+"2607.02243",
+"2607.02223",
+"2607.02178",
+"2607.02110",
+"2607.02065",
+"2607.02044"
 ],
 "arxiv_last_checked_date": "2026-07-06",
 "tns": [
