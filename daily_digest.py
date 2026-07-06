@@ -307,6 +307,22 @@ def clean_html_text(value):
     return " ".join(html.unescape(text).split())
 
 
+def trim_to_sentence(text, limit):
+    """limit文字を超える場合、その手前の文末('。'か'.')で切る。
+
+    単純に text[:limit] で切ると文の途中でぶつ切りになるため、
+    抜粋として表示する箇所ではこちらを使う。文末が見つからない場合は
+    limit文字でそのまま切る。
+    """
+    if len(text) <= limit:
+        return text
+    snippet = text[:limit]
+    cut = max(snippet.rfind("。"), snippet.rfind(". "))
+    if cut == -1:
+        return snippet
+    return snippet[:cut + 1]
+
+
 def parse_atel_date(value):
     return datetime.strptime(value.strip(), "%d %b %Y; %H:%M UT").replace(tzinfo=timezone.utc)
 
@@ -431,7 +447,7 @@ def fetch_press_source(source, start, end):
             "title": title,
             "url": absolute_url(source["url"], href),
             "posted": posted,
-            "excerpt": text_context[:260],
+            "excerpt": trim_to_sentence(text_context, 260),
         }
         if press_title_score(item) <= 0:
             continue
@@ -462,7 +478,7 @@ def fetch_press_excerpt(url, title):
     excerpt = text[start:]
     excerpt = re.sub(r"^発表のポイント\s*", "", excerpt)
     excerpt = re.sub(r"^ポイント\s*", "", excerpt)
-    return excerpt[:360].strip()
+    return trim_to_sentence(excerpt.strip(), 360)
 
 
 def fetch_domestic_press(start, end, exclude_urls=None):
@@ -628,7 +644,7 @@ def parse_rss_items(source, start, end):
             "title": title,
             "url": link,
             "posted": posted,
-            "excerpt": description[:320],
+            "excerpt": trim_to_sentence(description, 320),
         })
     return items
 
@@ -655,7 +671,7 @@ def parse_html_news_items(source, start, end):
             "title": title,
             "url": url,
             "posted": posted,
-            "excerpt": fetch_news_excerpt(url) or context[:320],
+            "excerpt": fetch_news_excerpt(url) or trim_to_sentence(context, 320),
         })
     unique = {}
     for item in items:
@@ -672,12 +688,12 @@ def fetch_news_excerpt(url):
     page = re.sub(r"(?is)<script.*?</script>|<style.*?</style>|<nav.*?</nav>|<header.*?</header>|<footer.*?</footer>", " ", page)
     meta = re.search(r'<meta[^>]+(?:name|property)=["\'](?:description|og:description)["\'][^>]+content=["\']([^"\']+)["\']', page, flags=re.I)
     if meta:
-        return clean_html_text(meta.group(1))[:320]
+        return trim_to_sentence(clean_html_text(meta.group(1)), 320)
     paragraphs = re.findall(r"<p\b[^>]*>(.*?)</p>", page, flags=re.S | re.I)
     for paragraph in paragraphs:
         text = clean_html_text(paragraph)
         if len(text) >= 80:
-            return text[:320]
+            return trim_to_sentence(text, 320)
     return ""
 
 
@@ -824,28 +840,39 @@ def _call_claude(prompt, max_tokens):
 
 
 def summarize_papers(papers):
-    paper_text = "\n\n".join(
-        f"[{i+1}] タイトル: {p['title']}\n投稿日: {p.get('published') or '不明'}\nURL: {p['url']}\nADS: {p['ads_url']}\nアブストラクト: {p['abstract']}"
-        for i, p in enumerate(papers)
-    )
-    prompt = (
-        "以下は対象期間中に arXiv に投稿された論文の一覧です。"
-        "各論文のアブストラクトを、要約ではなく自然な日本語に和訳してください。\n\n"
-        "出力形式を厳守してください。前置きや ``` は不要です。\n"
-        "各論文はタイトル、元論文リンク、掲載日、アブストラクト和訳だけにしてください。"
-        "ハイライト、目的、方法、結果、意義、結論、章別説明、details は出さないでください。\n\n"
-        "### 論文タイトル\n"
-        "元論文: [arXiv](URL) / [ADS](ADS_URL)\n"
-        "- **掲載**: YYYY-MM-DD\n"
-        "- **アブストラクト和訳**: アブストラクト全文の日本語訳\n"
-        "\n"
-        "この形式で全論文を出してください。見出しに 1. や 2. などの通し番号は付けないでください。\n"
-        "専門用語は無理に訳さず残してください(例: QPO、ハードステート)。"
-        "アブストラクトに書かれていないことは推測で補わないでください。\n\n"
-        f"{paper_text}"
-    )
-    raw = call_llm(prompt, max_tokens=10000)
-    return re.sub(r"```(?:markdown)?|```", "", raw).strip()
+    """論文ごとに1件ずつ和訳する。
+
+    かつては全論文を1回のプロンプトにまとめて投げていたが、件数が多いと
+    出力が max_tokens に収まりきらず、最後の論文が文の途中で切れてしまう
+    問題があった(1件ずつ呼べば、1件分の出力が上限を超えることはまずない)。
+    """
+    blocks = []
+    for p in papers:
+        prompt = (
+            "以下は arXiv に投稿された論文1件の情報です。"
+            "アブストラクトを、要約ではなく自然な日本語に和訳してください。\n\n"
+            "出力形式を厳守してください。前置きや ``` は不要です。\n"
+            "タイトル、元論文リンク、掲載日、アブストラクト和訳だけにしてください。"
+            "ハイライト、目的、方法、結果、意義、結論、章別説明、details は出さないでください。\n\n"
+            "### 論文タイトル\n"
+            "元論文: [arXiv](URL) / [ADS](ADS_URL)\n"
+            "- **掲載**: YYYY-MM-DD\n"
+            "- **アブストラクト和訳**: アブストラクト全文の日本語訳\n"
+            "\n"
+            "この形式で出力してください。見出しに 1. や 2. などの通し番号は付けないでください。\n"
+            "専門用語は無理に訳さず残してください(例: QPO、ハードステート)。"
+            "アブストラクトに書かれていないことは推測で補わないでください。\n\n"
+            f"タイトル: {p['title']}\n投稿日: {p.get('published') or '不明'}\n"
+            f"URL: {p['url']}\nADS: {p['ads_url']}\nアブストラクト: {p['abstract']}"
+        )
+        try:
+            raw = call_llm(prompt, max_tokens=1500)
+            blocks.append(re.sub(r"```(?:markdown)?|```", "", raw).strip())
+            time.sleep(0.2)
+        except Exception as e:
+            print(f"  論文の和訳に失敗 {p['url']}: {e}")
+            blocks.append(format_paper_fallback([p]))
+    return "\n\n".join(blocks)
 
 
 def parse_llm_json(raw):
@@ -874,29 +901,40 @@ def format_paper_fallback(papers):
 
 
 def summarize_gcn(groups):
-    sections = []
+    """天体イベント(GCNのグループ)ごとに1件ずつ要約する。
+
+    全イベントを1回のプロンプトにまとめると、イベント数が多い日に
+    出力が max_tokens を超え、最後のイベントが途中で切れてしまうため、
+    1イベントずつ呼び出す(重要度によるイベント間の並べ替えはしなくなるが、
+    出力が途中で欠けるより完全な方を優先する)。
+    """
+    blocks = []
     for event, circs in groups.items():
         entries = "\n".join(
             f"- GCN {c['id']}: {c['subject']}\n  掲載: {c.get('created', '不明')}\n  本文抜粋: {c['body']}"
             for c in circs
         )
-        sections.append(f"■ イベント: {event}({len(circs)}報)\n{entries}")
-    prompt = (
-        "以下は対象期間に GCN (General Coordinates Network) に流れた"
-        "天体速報(Circulars)を、天体イベントごとにまとめたものです。\n"
-        "各イベントについて、日本語で以下をまとめてください:\n"
-        "1. どんな天体・現象か(GRB / X線トランジェント / ニュートリノなど)\n"
-        "2. 重要な測定値(座標、赤方偏移、フラックス、対応天体の有無など、分かるもののみ)\n"
-        "3. 追観測の状況(どの装置・波長で何が見えた/見えなかったか)\n\n"
-        "出力形式(Markdown):\n"
-        "### イベント名(速報N報)\n"
-        "- **掲載**: YYYY-MM-DD HH:MM UT (複数報ある場合は最新報の時刻)\n"
-        "まとめ本文(3〜5文)\n\n"
-        "重要度が高い順(新発見・多波長で追観測が活発なものが上)に並べてください。"
-        "定常的な誤検出報告(flaring star 等)は最後に1行でまとめて構いません。\n\n"
-        + "\n\n".join(sections)
-    )
-    return call_llm(prompt, max_tokens=6000)
+        prompt = (
+            "以下は対象期間に GCN (General Coordinates Network) に流れた"
+            "天体速報(Circulars)を、1つの天体イベントについてまとめたものです。\n"
+            "日本語で以下をまとめてください:\n"
+            "1. どんな天体・現象か(GRB / X線トランジェント / ニュートリノなど)\n"
+            "2. 重要な測定値(座標、赤方偏移、フラックス、対応天体の有無など、分かるもののみ)\n"
+            "3. 追観測の状況(どの装置・波長で何が見えた/見えなかったか)\n\n"
+            "出力形式(Markdown。前置きや ``` は不要です):\n"
+            f"### {event}(速報{len(circs)}報)\n"
+            "- **掲載**: YYYY-MM-DD HH:MM UT (複数報ある場合は最新報の時刻)\n"
+            "まとめ本文(3〜5文)\n\n"
+            f"■ イベント: {event}({len(circs)}報)\n{entries}"
+        )
+        try:
+            raw = call_llm(prompt, max_tokens=1200)
+            blocks.append(re.sub(r"```(?:markdown)?|```", "", raw).strip())
+            time.sleep(0.2)
+        except Exception as e:
+            print(f"  GCN イベントの要約に失敗 {event}: {e}")
+            blocks.append(format_gcn_fallback({event: circs}))
+    return "\n\n".join(blocks)
 
 
 def format_gcn_fallback(groups):
@@ -909,7 +947,7 @@ def format_gcn_fallback(groups):
         latest = max((c.get("created", "") for c in circs), default="不明")
         bullets = []
         for c in circs[:5]:
-            body = clean_html_text(c["body"])[:280]
+            body = trim_to_sentence(clean_html_text(c["body"]), 280)
             bullets.append(f"- **GCN {c['id']}**: {c['subject']}。{body}")
         if len(circs) > 5:
             bullets.append(f"- ほか {len(circs) - 5} 報。原文リンクを確認してください。")
@@ -922,11 +960,35 @@ def format_gcn_fallback(groups):
     return "\n\n".join(blocks)
 
 
+def format_atel_fallback(atel):
+    return (
+        f"### ATel #{atel['id']}: {atel['title']}\n"
+        f"原文: [ATel #{atel['id']}]({atel['url']})\n"
+        f"- **掲載**: {atel['posted'].strftime('%Y-%m-%d %H:%M UT')}\n"
+        "自動要約に失敗したため、原文リンク先を確認してください。"
+    )
+
+
 def summarize_atels(atels):
-    sections = []
+    """ATel を1件ずつ要約する。
+
+    全件を1回のプロンプトにまとめると、件数が多い日に出力が max_tokens を
+    超え、最後の ATel が途中で切れてしまうため、1件ずつ呼び出す
+    (重要度による並べ替えはしなくなるが、出力が途中で欠けるより完全な方を優先する)。
+    """
+    blocks = []
     for atel in atels:
         body = atel["body"] or "本文未取得。タイトル、著者、投稿時刻、原文リンクのみ。"
-        sections.append(
+        prompt = (
+            "以下は ATel (The Astronomer's Telegram) に投稿された天体速報1件です。"
+            "日本語Markdownで要点をまとめてください。\n\n"
+            "出力形式を厳守してください。前置きや ``` は不要です。\n"
+            "### ATel #番号: タイトル\n"
+            "原文: [ATel #番号](URL)\n"
+            "- **掲載**: YYYY-MM-DD HH:MM UT\n"
+            "本文(2〜4文。「まとめ本文:」のようなラベルは付けない)\n\n"
+            "本文未取得の場合は、タイトル・著者・投稿時刻から分かる範囲だけを書き、"
+            "観測結果や数値を推測で補わないでください。\n\n"
             f"ATel #{atel['id']}\n"
             f"タイトル: {atel['title']}\n"
             f"投稿時刻: {atel['posted'].strftime('%Y-%m-%d %H:%M UT')}\n"
@@ -934,21 +996,14 @@ def summarize_atels(atels):
             f"URL: {atel['url']}\n"
             f"本文抜粋: {body}"
         )
-    prompt = (
-        "以下は対象期間に ATel (The Astronomer's Telegram) に投稿された"
-        "天体速報です。日本語Markdownで要点をまとめてください。\n\n"
-        "出力形式を厳守してください。前置きや ``` は不要です。\n"
-        "### ATel #番号: タイトル\n"
-        "原文: [ATel #番号](URL)\n"
-        "- **掲載**: YYYY-MM-DD HH:MM UT\n"
-        "本文(2〜4文。「まとめ本文:」のようなラベルは付けない)\n\n"
-        "本文未取得の項目は、タイトル・著者・投稿時刻から分かる範囲だけを書き、"
-        "観測結果や数値を推測で補わないでください。"
-        "重要度が高い順(新発見・追観測・多波長連携が分かるものが上)に並べてください。\n\n"
-        + "\n\n".join(sections)
-    )
-    raw = call_llm(prompt, max_tokens=6000)
-    return re.sub(r"```(?:markdown)?|```", "", raw).strip()
+        try:
+            raw = call_llm(prompt, max_tokens=900)
+            blocks.append(re.sub(r"```(?:markdown)?|```", "", raw).strip())
+            time.sleep(0.2)
+        except Exception as e:
+            print(f"  ATel の要約に失敗 #{atel['id']}: {e}")
+            blocks.append(format_atel_fallback(atel))
+    return "\n\n".join(blocks)
 
 
 # ---------------------------------------------------------------- 投稿
