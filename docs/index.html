@@ -22,8 +22,9 @@
     --line:#2c3352;
   }
   *{box-sizing:border-box}
+  html{overflow-x:hidden}
   body{
-    margin:0;background:var(--bg);color:var(--ink);
+    margin:0;background:var(--bg);color:var(--ink);overflow-x:hidden;
     font-family:"Noto Sans JP",sans-serif;font-size:15px;line-height:1.75;
   }
   header{
@@ -139,16 +140,20 @@
   .update-block:last-child::before{bottom:8px}
   .body h2{font-size:15px;margin:20px 0 8px;color:var(--ink);
     border-left:3px solid var(--gold);padding-left:10px}
-  .body h3{font-size:14.5px;margin:18px 0 4px;line-height:1.5}
-  .body h3 a{color:var(--ink);text-decoration:none;border-bottom:1px solid var(--line)}
-  .body h3 a:hover{color:var(--cyan);border-color:var(--cyan)}
-  .body a{color:var(--cyan)}
-  .body ul{margin:4px 0;padding-left:18px}
-  .body li{margin:2px 0}
-  .body strong{color:var(--gold);font-weight:700}
-  .body .katex{color:var(--ink);font-size:1em}
-  .body .katex-display{overflow-x:auto;overflow-y:hidden;padding:4px 0}
-  .body hr{border:none;border-top:1px dashed var(--line);margin:18px 0}
+  .body h3,.timeline-view h3{font-size:14.5px;margin:18px 0 4px;line-height:1.5}
+  .body h3 a,.timeline-view h3 a{color:var(--ink);text-decoration:none;border-bottom:1px solid var(--line)}
+  .body h3 a:hover,.timeline-view h3 a:hover{color:var(--cyan);border-color:var(--cyan)}
+  .body a,.timeline-view a{color:var(--cyan);overflow-wrap:anywhere}
+  .body,.body p,.body li,.body h2,.body h3,
+  .timeline-view,.timeline-view p,.timeline-view li,.timeline-view h3{overflow-wrap:anywhere;word-break:break-word}
+  .body .katex-display,.timeline-view .katex-display{max-width:100%}
+  .body .katex,.timeline-view .katex{display:inline-block;max-width:100%;overflow-x:auto;overflow-y:hidden;vertical-align:middle}
+  .body ul,.timeline-view ul{margin:4px 0;padding-left:18px}
+  .body li,.timeline-view li{margin:2px 0}
+  .body strong,.timeline-view strong{color:var(--gold);font-weight:700}
+  .body .katex,.timeline-view .katex{color:var(--ink);font-size:1em}
+  .body .katex-display,.timeline-view .katex-display{overflow-x:auto;overflow-y:hidden;padding:4px 0}
+  .body hr,.timeline-view hr{border:none;border-top:1px dashed var(--line);margin:18px 0}
   .digest-section{
     margin:10px 0 16px;padding:0;
   }
@@ -295,7 +300,7 @@
 </main>
 
 <script>
-const PAGE = 7; // 一度に読み込む日数
+const PAGE = 3; // 一度に読み込む日数
 let dates = [], cursor = 0, selectedDate = null, calendarYear = null, calendarMonth = null, activeFeed = 'transients';
 const FEED_SECTIONS = {
   transients: ['gcn', 'atel', 'tns'],
