@@ -1039,7 +1039,7 @@ def format_gcn_fallback(groups):
         latest = max((c.get("created", "") for c in circs), default="不明")
         bullets = []
         for c in circs[:5]:
-            body = trim_to_sentence(clean_html_text(c["body"]), 280)
+            body = trim_to_sentence(clean_html_text(c["body"]), 700)
             try:
                 translated = _google_translate(f"{c['subject']}\n{body}").replace("\n", "。")
             except Exception:
@@ -1057,7 +1057,7 @@ def format_gcn_fallback(groups):
 
 
 def format_atel_fallback(atel):
-    body = trim_to_sentence(atel["body"], 280) if atel.get("body") else ""
+    body = trim_to_sentence(atel["body"], 800) if atel.get("body") else ""
     try:
         title_ja = _google_translate(atel["title"])
         body_ja = _google_translate(body) if body else ""
