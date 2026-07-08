@@ -140,11 +140,13 @@ def http_get(url, timeout=60, retry_statuses=(429, 500, 502, 503, 504), waits=(2
 
 # ---------------------------------------------------------------- arXiv
 
-def fetch_papers(start, end, max_papers=MAX_PAPERS, exclude_ids=None):
+def fetch_papers(start, end, exclude_ids=None):
     """[start, end) の期間に投稿された論文を arXiv から取得する。
 
     exclude_ids に arXiv ID を渡すと、既に掲載済みの論文を除外する
-    (1時間ごとの実行で同じ論文を何度も再掲しないため)。
+    (1日に複数回実行しても同じ論文を何度も再掲しないため)。
+    優先度順の絞り込みはここでは行わず、呼び出し側で
+    rank_papers_by_relevance() に渡す。
     """
     cat_query = " OR ".join(f"cat:{c}" for c in CATEGORIES)
     date_query = f"submittedDate:[{start.strftime('%Y%m%d%H%M')} TO {end.strftime('%Y%m%d%H%M')}]"
@@ -171,13 +173,59 @@ def fetch_papers(start, end, max_papers=MAX_PAPERS, exclude_ids=None):
             "categories": [c.get("term") for c in entry.findall(f"{ATOM}category")],
         })
 
-    if KEYWORDS:
+    return papers
+
+
+def rank_papers_by_relevance(papers, max_papers):
+    """新着候補論文をLLMに一度だけ渡し、読む価値が高い順に選び直す。
+
+    従来は論文ごとにキーワード文字列一致でスコアリングしていたが、
+    内容を見た優先度付けにするため、候補全体を1回のLLM呼び出しで
+    まとめてランキングする(翻訳のような1件ずつの呼び出しはしない)。
+    LLM呼び出しが失敗した場合は、従来のキーワードスコア方式にフォールバックする。
+    """
+    if not papers:
+        return []
+
+    def keyword_fallback():
         def score(p):
             text = f"{p['title']} {p['abstract']}".lower()
             return sum(1 for kw in KEYWORDS if kw.lower() in text)
-        papers.sort(key=score, reverse=True)
+        return sorted(papers, key=score, reverse=True)[:max_papers]
 
-    return papers[:max_papers]
+    listing = "\n\n".join(
+        f"[{i}] {p['title']}\n{p['abstract'][:300]}" for i, p in enumerate(papers)
+    )
+    prompt = (
+        "以下はarXivに新着投稿された論文候補のリストです。"
+        "X線天文・高エネルギー天体物理・小型衛星による多波長観測・測定器/検出器の"
+        "分野の読者にとって、読む価値が高い順に並べ替えてください。\n\n"
+        "特に重視してよい観点(該当すれば優先度を上げる): " + ", ".join(KEYWORDS) + "\n\n"
+        f"候補は全部で{len(papers)}件あります。重要な順に最大{max_papers}件を選んでください。\n"
+        "出力は JSON 配列のみにしてください。前置きや説明、``` は不要です。\n"
+        "配列の各要素は、上の [番号] に対応する整数にしてください(重要度が高い順)。\n"
+        '例: [12, 4, 0, 33]\n\n' + listing
+    )
+    try:
+        raw = call_llm(prompt, max_tokens=800)
+        text = re.sub(r"```(?:json)?|```", "", raw).strip()
+        match = re.search(r"\[.*\]", text, flags=re.S)
+        order = json.loads(match.group(0) if match else text)
+        if not isinstance(order, list):
+            raise ValueError("ランキング結果がリストではありません")
+        selected, used = [], set()
+        for idx in order:
+            if isinstance(idx, int) and 0 <= idx < len(papers) and idx not in used:
+                selected.append(papers[idx])
+                used.add(idx)
+            if len(selected) >= max_papers:
+                break
+        if not selected:
+            raise ValueError("ランキング結果が空でした")
+        return selected
+    except Exception as e:
+        print(f"  論文の優先度ランキングに失敗、キーワードスコアにフォールバックします: {e}")
+        return keyword_fallback()
 
 
 def arxiv_id(url):
@@ -869,7 +917,7 @@ def _call_claude(prompt, max_tokens):
 
 
 def _google_translate(text, source="en", target="ja"):
-    """Gemini/Claude が両方失敗した場合の最終フォールバック(無料の非公式エンドポイント)。"""
+    """無料の非公式エンドポイントによる機械翻訳。"""
     params = urllib.parse.urlencode({
         "client": "gtx", "sl": source, "tl": target, "dt": "t", "q": text,
     })
@@ -881,53 +929,32 @@ def _google_translate(text, source="en", target="ja"):
     return "".join(segment[0] for segment in data[0])
 
 
-def format_paper_google_fallback(p, translated):
+def format_paper_translated(p, translated):
     return (
         f"### {p['title']}\n"
         f"元論文: [arXiv]({p['url']}) / [ADS]({p['ads_url']})\n"
         f"- **掲載**: {p.get('published') or '不明'}\n"
-        f"- **アブストラクト和訳(Google翻訳)**: {translated}"
+        f"- **アブストラクト和訳**: {translated}"
     )
 
 
 def summarize_papers(papers):
-    """論文ごとに1件ずつ和訳する。
+    """論文ごとにアブストラクトをGoogle翻訳で和訳する。
 
-    かつては全論文を1回のプロンプトにまとめて投げていたが、件数が多いと
-    出力が max_tokens に収まりきらず、最後の論文が文の途中で切れてしまう
-    問題があった(1件ずつ呼べば、1件分の出力が上限を超えることはまずない)。
+    以前は論文ごとにLLM(Gemini/Claude)へ「要約ではなく自然な日本語に
+    和訳して」と投げていたが、1回の実行で論文数分のLLM呼び出しが発生し、
+    Geminiのレート制限(429)に頻発して引っかかっていた。翻訳は機械的な
+    直訳で足りるため Google 翻訳に置き換え、浮いたLLM呼び出し枠は
+    rank_papers_by_relevance() の優先度付けに回す。
     """
     blocks = []
     for p in papers:
-        prompt = (
-            "以下は arXiv に投稿された論文1件の情報です。"
-            "アブストラクトを、要約ではなく自然な日本語に和訳してください。\n\n"
-            "出力形式を厳守してください。前置きや ``` は不要です。\n"
-            "タイトル、元論文リンク、掲載日、アブストラクト和訳だけにしてください。"
-            "ハイライト、目的、方法、結果、意義、結論、章別説明、details は出さないでください。\n\n"
-            "### 論文タイトル\n"
-            "元論文: [arXiv](URL) / [ADS](ADS_URL)\n"
-            "- **掲載**: YYYY-MM-DD\n"
-            "- **アブストラクト和訳**: アブストラクト全文の日本語訳\n"
-            "\n"
-            "この形式で出力してください。見出しに 1. や 2. などの通し番号は付けないでください。\n"
-            "専門用語は無理に訳さず残してください(例: QPO、ハードステート)。"
-            "アブストラクトに書かれていないことは推測で補わないでください。\n\n"
-            f"タイトル: {p['title']}\n投稿日: {p.get('published') or '不明'}\n"
-            f"URL: {p['url']}\nADS: {p['ads_url']}\nアブストラクト: {p['abstract']}"
-        )
         try:
-            raw = call_llm(prompt, max_tokens=1500)
-            blocks.append(re.sub(r"```(?:markdown)?|```", "", raw).strip())
-            time.sleep(0.2)
+            translated = _google_translate(p["abstract"])
+            blocks.append(format_paper_translated(p, translated))
         except Exception as e:
             print(f"  論文の和訳に失敗 {p['url']}: {e}")
-            try:
-                translated = _google_translate(p["abstract"])
-                blocks.append(format_paper_google_fallback(p, translated))
-            except Exception as e2:
-                print(f"  Google 翻訳フォールバックも失敗 {p['url']}: {e2}")
-                blocks.append(format_paper_fallback([p]))
+            blocks.append(format_paper_fallback([p]))
     return "\n\n".join(blocks)
 
 
@@ -1291,7 +1318,8 @@ def generate_digest(start, end, use_index_first=True):
     arxiv_start = end - timedelta(days=7)
     try:
         arxiv_seen = set(seen.get("arxiv", []))
-        papers = fetch_papers(arxiv_start, end, exclude_ids=arxiv_seen)
+        candidates = fetch_papers(arxiv_start, end, exclude_ids=arxiv_seen)
+        papers = rank_papers_by_relevance(candidates, MAX_PAPERS)
         paper_window = "直近7日"
         if papers:
             print(f"arXiv: {len(papers)} 件の論文を要約中...")
