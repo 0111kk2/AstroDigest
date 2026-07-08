@@ -178,7 +178,6 @@ def fetch_papers(start, end, exclude_ids=None):
 
 def rank_papers_by_relevance(papers, max_papers):
     """新着候補論文をLLMに一度だけ渡し、読む価値が高い順に選び直す。
-
     従来は論文ごとにキーワード文字列一致でスコアリングしていたが、
     内容を見た優先度付けにするため、候補全体を1回のLLM呼び出しで
     まとめてランキングする(翻訳のような1件ずつの呼び出しはしない)。
@@ -1031,7 +1030,11 @@ def format_gcn_fallback(groups):
         bullets = []
         for c in circs[:5]:
             body = trim_to_sentence(clean_html_text(c["body"]), 280)
-            bullets.append(f"- **GCN {c['id']}**: {c['subject']}。{body}")
+            try:
+                translated = _google_translate(f"{c['subject']}\n{body}").replace("\n", "。")
+            except Exception:
+                translated = f"{c['subject']}。{body}"
+            bullets.append(f"- **GCN {c['id']}**: {translated}")
         if len(circs) > 5:
             bullets.append(f"- ほか {len(circs) - 5} 報。原文リンクを確認してください。")
         blocks.append(
@@ -1044,11 +1047,18 @@ def format_gcn_fallback(groups):
 
 
 def format_atel_fallback(atel):
+    body = trim_to_sentence(atel["body"], 280) if atel.get("body") else ""
+    try:
+        title_ja = _google_translate(atel["title"])
+        body_ja = _google_translate(body) if body else ""
+    except Exception:
+        title_ja, body_ja = atel["title"], body
+    summary = f"{title_ja}。{body_ja}" if body_ja else title_ja
     return (
         f"### ATel #{atel['id']}: {atel['title']}\n"
         f"原文: [ATel #{atel['id']}]({atel['url']})\n"
         f"- **掲載**: {atel['posted'].strftime('%Y-%m-%d %H:%M UT')}\n"
-        "自動要約に失敗したため、原文リンク先を確認してください。"
+        f"{summary}"
     )
 
 
