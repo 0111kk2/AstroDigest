@@ -815,10 +815,20 @@ def attach_gcn_source_links(summary, groups):
             for c in circs
         )
         source_line = f"原文: {links}"
-        pattern = re.compile(rf"^(###\s*{re.escape(event)}[^\n]*)$", flags=re.M)
-        result, count = pattern.subn(rf"\1\n{source_line}", result, count=1)
-        if count == 0:
+        header_pattern = re.compile(rf"^###\s*{re.escape(event)}[^\n]*$", flags=re.M)
+        header_match = header_pattern.search(result)
+        if header_match is None:
             unmatched.append((event, source_line))
+            continue
+        # format_gcn_fallback() は自前で「原文:」行を付けるので、二重に挿入しない。
+        after_header = result[header_match.end():header_match.end() + len(source_line) + 10]
+        if after_header.lstrip("\n").startswith("原文:"):
+            continue
+        result = (
+            result[:header_match.end()]
+            + f"\n{source_line}"
+            + result[header_match.end():]
+        )
 
     if unmatched:
         result += "\n\n### GCN 原文リンク\n\n" + "\n".join(
