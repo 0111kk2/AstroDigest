@@ -13,13 +13,13 @@ GitHub Issue(または Slack/Discord Webhook)に投稿するスクリプト。
   WEBHOOK_URL       : (任意)Slack/Discord の Webhook URL。設定すると Issue の代わりに送信。
 
 使い方:
-  python daily_digest.py                # 通常実行(直近 HOURS_BACK 時間分を取得、1時間ごとの実行を想定)
+  python daily_digest.py                # 通常実行(直近 HOURS_BACK 時間分を取得、1日3回の実行を想定)
   python daily_digest.py --backfill 7   # 昨日から遡って7日分を過去データとして一括生成
                                          # (docs/data/ に既にある日付はスキップ)
 
-1時間ごとの実行について:
+1日3回の実行について:
   通常実行は「その日のファイルに新着があれば追記」する方式。新着が無い回は
-  ファイルもIssue/Webhookも更新しない(静かにスキップする)ので、1時間おきに
+  ファイルもIssue/Webhookも更新しない(静かにスキップする)ので、頻繁に
   実行しても「新着なし」通知でスパムにはならない。
 """
 
@@ -53,7 +53,7 @@ KEYWORDS = [
     "detector", "ccd", "cmos sensor", "sipm", "tes", "microcalorimeter",
     "xrism", "nicer", "swift", "chandra", "nustar", "erosita", "athena",
 ]
-MAX_PAPERS = 15            # 1日に要約する論文の最大件数
+MAX_PAPERS = 20            # 1回の実行で要約する論文の最大件数
 
 # --- GCN 速報 ---
 INCLUDE_GCN = True         # False にすると GCN セクションを無効化
@@ -102,8 +102,8 @@ MISSION_KEYWORDS = [
 ]
 
 # --- 共通 ---
-HOURS_BACK = 2             # 通常実行(1時間ごと想定)で何時間前まで遡るか。
-                           # cron間隔(1h)+ Actions側の実行遅延バッファ
+HOURS_BACK = 8             # 通常実行(6時間ごと想定)で何時間前まで遡るか。
+                           # cron間隔(6h)+ Actions側の実行遅延バッファ
 BACKFILL_WINDOW_HOURS = 26 # --backfill で過去1日分を再現する際の窓(取りこぼし防止に26h)
 ARXIV_LOOKBACK_HOURS = 48  # バックフィルや手動確認用の上限。通常表示はJST当日分に制限する
 # 使用する AI: GEMINI_API_KEY があれば Gemini(無料枠)、
@@ -784,10 +784,26 @@ def attach_gcn_source_links(summary, groups):
 # ---------------------------------------------------------------- LLM 呼び出し
 
 def call_llm(prompt, max_tokens=4000):
-    """GEMINI_API_KEY があれば Gemini、なければ Claude を呼び出す。"""
-    if os.environ.get("GEMINI_API_KEY"):
-        return _call_gemini(prompt, max_tokens)
-    return _call_claude(prompt, max_tokens)
+    """利用可能なキーに応じて Gemini / Claude を呼び出す。"""
+    has_gemini = bool(os.environ.get("GEMINI_API_KEY"))
+    has_claude = bool(os.environ.get("ANTHROPIC_API_KEY"))
+    if not has_gemini and not has_claude:
+        raise RuntimeError("GEMINI_API_KEY または ANTHROPIC_API_KEY を設定してください。")
+
+    errors = []
+    if has_gemini:
+        try:
+            return _call_gemini(prompt, max_tokens)
+        except Exception as e:
+            errors.append(f"Gemini: {e}")
+            if has_claude:
+                print(f"Gemini 呼び出しに失敗したため Claude にフォールバックします: {e}")
+    if has_claude:
+        try:
+            return _call_claude(prompt, max_tokens)
+        except Exception as e:
+            errors.append(f"Claude: {e}")
+    raise RuntimeError(" / ".join(errors))
 
 
 def _call_gemini(prompt, max_tokens):
@@ -814,12 +830,25 @@ def _call_gemini(prompt, max_tokens):
             wait = 25 * (attempt + 1)
             print(f"Gemini API が混雑しています({e.code})。{wait}秒待って再試行します...")
             time.sleep(wait)
-    parts = data["candidates"][0]["content"]["parts"]
-    return "".join(p.get("text", "") for p in parts)
+    if isinstance(data, dict) and data.get("error"):
+        raise RuntimeError(data["error"].get("message", "Gemini API error"))
+
+    candidates = data.get("candidates") if isinstance(data, dict) else None
+    if not candidates:
+        raise RuntimeError("Gemini response に candidates がありません。")
+    content = candidates[0].get("content", {})
+    parts = content.get("parts", [])
+    text = "".join(p.get("text", "") for p in parts if isinstance(p, dict)).strip()
+    if not text:
+        reason = candidates[0].get("finishReason") if isinstance(candidates[0], dict) else None
+        raise RuntimeError(f"Gemini response に本文がありません。finishReason={reason}")
+    return text
 
 
 def _call_claude(prompt, max_tokens):
-    api_key = os.environ["ANTHROPIC_API_KEY"]
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise RuntimeError("ANTHROPIC_API_KEY が設定されていません。")
     body = json.dumps({
         "model": CLAUDE_MODEL,
         "max_tokens": max_tokens,
@@ -837,6 +866,28 @@ def _call_claude(prompt, max_tokens):
     with urllib.request.urlopen(req, timeout=300) as res:
         data = json.loads(res.read())
     return "".join(b["text"] for b in data["content"] if b["type"] == "text")
+
+
+def _google_translate(text, source="en", target="ja"):
+    """Gemini/Claude が両方失敗した場合の最終フォールバック(無料の非公式エンドポイント)。"""
+    params = urllib.parse.urlencode({
+        "client": "gtx", "sl": source, "tl": target, "dt": "t", "q": text,
+    })
+    req = urllib.request.Request(
+        f"https://translate.googleapis.com/translate_a/single?{params}", headers=UA
+    )
+    with urllib.request.urlopen(req, timeout=30) as res:
+        data = json.loads(res.read())
+    return "".join(segment[0] for segment in data[0])
+
+
+def format_paper_google_fallback(p, translated):
+    return (
+        f"### {p['title']}\n"
+        f"元論文: [arXiv]({p['url']}) / [ADS]({p['ads_url']})\n"
+        f"- **掲載**: {p.get('published') or '不明'}\n"
+        f"- **アブストラクト和訳(Google翻訳)**: {translated}"
+    )
 
 
 def summarize_papers(papers):
@@ -871,7 +922,12 @@ def summarize_papers(papers):
             time.sleep(0.2)
         except Exception as e:
             print(f"  論文の和訳に失敗 {p['url']}: {e}")
-            blocks.append(format_paper_fallback([p]))
+            try:
+                translated = _google_translate(p["abstract"])
+                blocks.append(format_paper_google_fallback(p, translated))
+            except Exception as e2:
+                print(f"  Google 翻訳フォールバックも失敗 {p['url']}: {e2}")
+                blocks.append(format_paper_fallback([p]))
     return "\n\n".join(blocks)
 
 

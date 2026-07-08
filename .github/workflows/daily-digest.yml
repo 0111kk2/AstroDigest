@@ -3,7 +3,7 @@ name: Astro Daily Digest
 on:
   workflow_dispatch:
   schedule:
-    - cron: "7 * * * *" # 毎時7分(GitHub側が混みやすい毎時00分は避ける)
+    - cron: "7 21,3,9 * * *" # JST 6:00 / 12:00 / 18:00 頃(毎時00分は避けて7分に)
 
 permissions:
   contents: write
