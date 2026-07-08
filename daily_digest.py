@@ -784,10 +784,26 @@ def attach_gcn_source_links(summary, groups):
 # ---------------------------------------------------------------- LLM 呼び出し
 
 def call_llm(prompt, max_tokens=4000):
-    """GEMINI_API_KEY があれば Gemini、なければ Claude を呼び出す。"""
-    if os.environ.get("GEMINI_API_KEY"):
-        return _call_gemini(prompt, max_tokens)
-    return _call_claude(prompt, max_tokens)
+    """利用可能なキーに応じて Gemini / Claude を呼び出す。"""
+    has_gemini = bool(os.environ.get("GEMINI_API_KEY"))
+    has_claude = bool(os.environ.get("ANTHROPIC_API_KEY"))
+    if not has_gemini and not has_claude:
+        raise RuntimeError("GEMINI_API_KEY または ANTHROPIC_API_KEY を設定してください。")
+
+    errors = []
+    if has_gemini:
+        try:
+            return _call_gemini(prompt, max_tokens)
+        except Exception as e:
+            errors.append(f"Gemini: {e}")
+            if has_claude:
+                print(f"Gemini 呼び出しに失敗したため Claude にフォールバックします: {e}")
+    if has_claude:
+        try:
+            return _call_claude(prompt, max_tokens)
+        except Exception as e:
+            errors.append(f"Claude: {e}")
+    raise RuntimeError(" / ".join(errors))
 
 
 def _call_gemini(prompt, max_tokens):
@@ -814,12 +830,25 @@ def _call_gemini(prompt, max_tokens):
             wait = 25 * (attempt + 1)
             print(f"Gemini API が混雑しています({e.code})。{wait}秒待って再試行します...")
             time.sleep(wait)
-    parts = data["candidates"][0]["content"]["parts"]
-    return "".join(p.get("text", "") for p in parts)
+    if isinstance(data, dict) and data.get("error"):
+        raise RuntimeError(data["error"].get("message", "Gemini API error"))
+
+    candidates = data.get("candidates") if isinstance(data, dict) else None
+    if not candidates:
+        raise RuntimeError("Gemini response に candidates がありません。")
+    content = candidates[0].get("content", {})
+    parts = content.get("parts", [])
+    text = "".join(p.get("text", "") for p in parts if isinstance(p, dict)).strip()
+    if not text:
+        reason = candidates[0].get("finishReason") if isinstance(candidates[0], dict) else None
+        raise RuntimeError(f"Gemini response に本文がありません。finishReason={reason}")
+    return text
 
 
 def _call_claude(prompt, max_tokens):
-    api_key = os.environ["ANTHROPIC_API_KEY"]
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise RuntimeError("ANTHROPIC_API_KEY が設定されていません。")
     body = json.dumps({
         "model": CLAUDE_MODEL,
         "max_tokens": max_tokens,
