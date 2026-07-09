@@ -2,7 +2,8 @@
 "mission_news": [
 "https://www.nustar.caltech.edu/news/nustar260703",
 "https://science.nasa.gov/blogs/swift/2026/07/03/teams-make-contact-with-spacecraft-set-to-boost-nasas-swift/",
-"https://science.nasa.gov/astrophysics/programs/physics-of-the-cosmos/community/xr-sig-seminar-10-july-2026/"
+"https://science.nasa.gov/astrophysics/programs/physics-of-the-cosmos/community/xr-sig-seminar-10-july-2026/",
+"https://science.nasa.gov/missions/ixpe/nasa-space-telescope-maps-magnetic-fields-of-lighthouse-pulsar/"
 ],
 "press": [
 "https://www.isas.jaxa.jp/topics/004288.html"
@@ -16,7 +17,12 @@
 "45118",
 "45117",
 "45116",
-"45115"
+"45115",
+"45128",
+"45127",
+"45126",
+"45125",
+"45124"
 ],
 "atel": [
 "17872",
@@ -401,6 +407,8 @@
 "SN 2026rhk",
 "SN 2026sqf",
 "SN 2026roo",
-"SN 2026rld"
+"SN 2026rld",
+"SN 2026rwk",
+"SN 2026roc"
 ]
 }
