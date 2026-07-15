@@ -6,7 +6,8 @@
 "https://science.nasa.gov/missions/ixpe/nasa-space-telescope-maps-magnetic-fields-of-lighthouse-pulsar/",
 "https://science.nasa.gov/blogs/swift/2026/07/10/on-orbit-checkouts-in-progress-for-mission-to-boost-nasas-swift/",
 "https://www.nustar.caltech.edu/news/nustar260710",
-"https://science.nasa.gov/missions/hubble/nasas-hubble-discovers-first-of-star-clusters-missing-black-holes/"
+"https://science.nasa.gov/missions/hubble/nasas-hubble-discovers-first-of-star-clusters-missing-black-holes/",
+"https://science.nasa.gov/blogs/swift/2026/07/15/spacecraft-commissioning-on-track-for-mission-to-boost-nasas-swift/"
 ],
 "press": [
 "https://www.isas.jaxa.jp/topics/004288.html"
@@ -39,7 +40,10 @@
 "45157",
 "45156",
 "45155",
-"45154"
+"45154",
+"45170",
+"45169",
+"45168"
 ],
 "atel": [
 "17872",
@@ -60,7 +64,10 @@
 "17890",
 "17891",
 "17893",
-"17892"
+"17892",
+"17896",
+"17895",
+"17894"
 ],
 "arxiv": [
 "2607.01941",
@@ -630,7 +637,11 @@
 "2607.10828",
 "2607.10818",
 "2607.10396",
-"2607.10250"
+"2607.10250",
+"2607.10060",
+"2607.10124",
+"2607.09862",
+"2607.11929"
 ],
 "arxiv_last_checked_date": "2026-07-06",
 "tns": [
