@@ -17,7 +17,8 @@
 "https://www.nustar.caltech.edu/news/nustar260724",
 "https://science.nasa.gov/missions/swift/nasas-swift-sees-wandering-mega-black-hole-shredding-star/",
 "https://science.nasa.gov/researchers/solicitations/roses-2025/amendment-67-d-3-agigo-change-to-ixpe-and-nicer-general-observer-second-opportunity-in-roses-25/",
-"https://science.nasa.gov/astrophysics/programs/physics-of-the-cosmos/community/roses-25-d-3-agigo-change-to-ixpe-and-nicer-go-opportunity/"
+"https://science.nasa.gov/astrophysics/programs/physics-of-the-cosmos/community/roses-25-d-3-agigo-change-to-ixpe-and-nicer-go-opportunity/",
+"https://science.nasa.gov/blogs/swift/2026/07/28/commissioning-update-for-spacecraft-to-boost-nasas-swift/"
 ],
 "press": [
 "https://www.isas.jaxa.jp/topics/004288.html",
@@ -78,7 +79,8 @@
 "45231",
 "45230",
 "45229",
-"45228"
+"45228",
+"45244"
 ],
 "atel": [
 "17872",
@@ -134,7 +136,8 @@
 "17925",
 "17926",
 "17927",
-"17928"
+"17928",
+"17929"
 ],
 "arxiv": [
 "2607.01941",
@@ -1083,7 +1086,19 @@
 "2607.24527",
 "2607.24461",
 "2607.24457",
-"2607.24418"
+"2607.24418",
+"2607.24397",
+"2607.24349",
+"2607.24265",
+"2607.24234",
+"2607.24201",
+"2607.23911",
+"2607.23661",
+"2607.23555",
+"2607.23516",
+"2607.23436",
+"2607.22816",
+"2607.22815"
 ],
 "arxiv_last_checked_date": "2026-07-06",
 "tns": [
