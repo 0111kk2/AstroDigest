@@ -27,7 +27,8 @@
 "https://www.nustar.caltech.edu/news/nustar260731",
 "https://www.nasa.gov/image-article/nasas-ixpe-studies-magnetar/",
 "https://science.nasa.gov/astrophysics/programs/physics-of-the-cosmos/community/xr-sig-seminar-14-august-2026/",
-"https://science.nasa.gov/blogs/swift/2026/08/11/nasa-swift-boost-spacecraft-prepares-to-continue-mission/"
+"https://science.nasa.gov/blogs/swift/2026/08/11/nasa-swift-boost-spacecraft-prepares-to-continue-mission/",
+"https://www.nasa.gov/hrp/research-opportunity-help-guide-priorities-for-commercial-spaceflight-biospecimens/"
 ],
 "press": [
 "https://www.isas.jaxa.jp/topics/004288.html",
@@ -110,7 +111,10 @@
 "45350",
 "45349",
 "45348",
-"45358"
+"45358",
+"45365",
+"45364",
+"45363"
 ],
 "atel": [
 "17872",
@@ -199,17 +203,10 @@
 "17959",
 "17958",
 "17960",
-"17961"
+"17961",
+"17962"
 ],
 "arxiv": [
-"2607.12618",
-"2607.12087",
-"2607.13019",
-"2607.13004",
-"2607.12953",
-"2607.12908",
-"2607.12904",
-"2607.12900",
 "2607.12898",
 "2607.12891",
 "2607.12827",
@@ -1201,7 +1198,15 @@
 "2608.10388",
 "2608.10307",
 "2608.10287",
-"2608.10284"
+"2608.10284",
+"2608.10067",
+"2608.10017",
+"2608.10280",
+"2608.10212",
+"2608.10092",
+"2608.10058",
+"2608.10078",
+"2608.10086"
 ],
 "arxiv_last_checked_date": "2026-07-06",
 "tns": [
