@@ -39,7 +39,8 @@
 "https://science.nasa.gov/learn/heat/resource/space-math-at-nasa-math-problems-related-to-the-universe/",
 "https://science.nasa.gov/blogs/swift/2026/08/28/nasas-swift-restarts-science-observations/",
 "https://www.nustar.caltech.edu/news/nustar260828",
-"https://science.nasa.gov/earth/earth-observatory/iceberg-from-petermann-glacier-speeds-away/"
+"https://science.nasa.gov/earth/earth-observatory/iceberg-from-petermann-glacier-speeds-away/",
+"https://www.nasa.gov/news-release/nasa-selects-blue-origin-as-mars-telecommunications-network-provider/"
 ],
 "press": [
 "https://www.isas.jaxa.jp/topics/004288.html",
@@ -160,7 +161,9 @@
 "45477",
 "45476",
 "45475",
-"45474"
+"45474",
+"45491",
+"45490"
 ],
 "atel": [
 "17872",
@@ -312,17 +315,6 @@
 "18025"
 ],
 "arxiv": [
-"2608.01408",
-"2608.00923",
-"2608.00834",
-"2608.00770",
-"2608.00461",
-"2608.00354",
-"2608.00324",
-"2608.00281",
-"2608.00193",
-"2608.02573",
-"2608.02463",
 "2608.02314",
 "2608.02273",
 "2608.02269",
@@ -1311,7 +1303,18 @@
 "2608.30503",
 "2608.30489",
 "2608.30080",
-"2608.30029"
+"2608.30029",
+"2608.29689",
+"2608.29687",
+"2608.29593",
+"2608.29466",
+"2608.29365",
+"2608.28975",
+"2608.28805",
+"2608.28757",
+"2608.28749",
+"2608.28748",
+"2608.28740"
 ],
 "arxiv_last_checked_date": "2026-07-06",
 "tns": [
