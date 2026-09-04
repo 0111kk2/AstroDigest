@@ -40,7 +40,8 @@
 "https://science.nasa.gov/blogs/swift/2026/08/28/nasas-swift-restarts-science-observations/",
 "https://www.nustar.caltech.edu/news/nustar260828",
 "https://science.nasa.gov/earth/earth-observatory/iceberg-from-petermann-glacier-speeds-away/",
-"https://www.nasa.gov/news-release/nasa-selects-blue-origin-as-mars-telecommunications-network-provider/"
+"https://www.nasa.gov/news-release/nasa-selects-blue-origin-as-mars-telecommunications-network-provider/",
+"https://science.nasa.gov/blogs/swift/2026/09/04/commercial-spacecraft-for-nasas-swift-boost-continues-tech-demo/"
 ],
 "press": [
 "https://www.isas.jaxa.jp/topics/004288.html",
@@ -321,10 +322,6 @@
 "18030"
 ],
 "arxiv": [
-"2608.05270",
-"2608.04863",
-"2608.04861",
-"2608.04837",
 "2608.04819",
 "2608.04757",
 "2608.04733",
@@ -1320,7 +1317,11 @@
 "2609.03568",
 "2609.03374",
 "2609.03373",
-"2609.03329"
+"2609.03329",
+"2609.03016",
+"2609.03237",
+"2609.03056",
+"2609.03157"
 ],
 "arxiv_last_checked_date": "2026-07-06",
 "tns": [
