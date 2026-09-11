@@ -49,7 +49,8 @@
 "https://www.nasa.gov/people/henry-helgeson/",
 "https://www.nasa.gov/osbp/prime-contractor-jpl/",
 "https://science.nasa.gov/astrophysics/programs/cosmic-origins/community/agn-sig-spotlight-series-22-sept-2026/",
-"https://www.nasa.gov/image-article/nasas-chandra-spots-galactic-gem/"
+"https://www.nasa.gov/image-article/nasas-chandra-spots-galactic-gem/",
+"https://www.nustar.caltech.edu/news/nustar260911"
 ],
 "press": [
 "https://www.isas.jaxa.jp/topics/004288.html",
@@ -351,7 +352,6 @@
 "18035"
 ],
 "arxiv": [
-"2608.12530",
 "2608.13516",
 "2608.13464",
 "2608.13330",
@@ -1350,7 +1350,8 @@
 "2609.06805",
 "2609.06653",
 "2609.06631",
-"2609.06496"
+"2609.06496",
+"2609.06382"
 ],
 "arxiv_last_checked_date": "2026-07-06",
 "tns": [
