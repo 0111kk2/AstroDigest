@@ -51,7 +51,8 @@
 "https://science.nasa.gov/astrophysics/programs/cosmic-origins/community/agn-sig-spotlight-series-22-sept-2026/",
 "https://www.nasa.gov/image-article/nasas-chandra-spots-galactic-gem/",
 "https://www.nustar.caltech.edu/news/nustar260911",
-"https://science.nasa.gov/missions/xrism/xrism-sees-pulsar-gathering-companions-wind/"
+"https://science.nasa.gov/missions/xrism/xrism-sees-pulsar-gathering-companions-wind/",
+"https://science.nasa.gov/solar-system/skywatching/night-sky-network/embracing-the-equinox/"
 ],
 "press": [
 "https://www.isas.jaxa.jp/topics/004288.html",
@@ -218,7 +219,10 @@
 "45646",
 "45662",
 "45661",
-"45660"
+"45660",
+"45684",
+"45683",
+"45682"
 ],
 "atel": [
 "17872",
@@ -400,7 +404,10 @@
 "18062",
 "18063",
 "18065",
-"18064"
+"18064",
+"18068",
+"18067",
+"18066"
 ],
 "arxiv": [
 "2608.15677",
