@@ -53,7 +53,8 @@
 "https://www.nustar.caltech.edu/news/nustar260911",
 "https://science.nasa.gov/missions/xrism/xrism-sees-pulsar-gathering-companions-wind/",
 "https://science.nasa.gov/solar-system/skywatching/night-sky-network/embracing-the-equinox/",
-"https://www.nasa.gov/image-article/nasas-chandra-finds-unusual-objects-in-pinwheel-galaxy/"
+"https://www.nasa.gov/image-article/nasas-chandra-finds-unusual-objects-in-pinwheel-galaxy/",
+"https://science.nasa.gov/missions/hubble/nasas-hubble-seeks-lensed-supernova-marks-200000-orbits/"
 ],
 "press": [
 "https://www.isas.jaxa.jp/topics/004288.html",
@@ -414,7 +415,9 @@
 "18069",
 "18071",
 "18070",
-"18072"
+"18072",
+"18076",
+"18075"
 ],
 "arxiv": [
 "2608.15677",
