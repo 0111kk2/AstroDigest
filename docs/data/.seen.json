@@ -55,7 +55,8 @@
 "https://science.nasa.gov/solar-system/skywatching/night-sky-network/embracing-the-equinox/",
 "https://www.nasa.gov/image-article/nasas-chandra-finds-unusual-objects-in-pinwheel-galaxy/",
 "https://science.nasa.gov/missions/hubble/nasas-hubble-seeks-lensed-supernova-marks-200000-orbits/",
-"https://www.nustar.caltech.edu/news/nustar260915"
+"https://www.nustar.caltech.edu/news/nustar260915",
+"https://www.nasa.gov/image-article/nasas-hubble-telescope-reaches-milestone-looks-for-elusive-supernova/"
 ],
 "press": [
 "https://www.isas.jaxa.jp/topics/004288.html",
@@ -227,7 +228,8 @@
 "45683",
 "45682",
 "45694",
-"45693"
+"45693",
+"45708"
 ],
 "atel": [
 "17872",
@@ -419,7 +421,9 @@
 "18072",
 "18076",
 "18075",
-"18077"
+"18077",
+"18079",
+"18078"
 ],
 "arxiv": [
 "2608.15677",
