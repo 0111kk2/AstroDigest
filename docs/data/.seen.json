@@ -71,7 +71,8 @@
 "https://science.nasa.gov/apod/circling-the-black-hole/",
 "https://science.nasa.gov/apod/approaching-the-black-hole/",
 "https://science.nasa.gov/blogs/swift/2026/09/25/nasas-swift-powers-on-third-instrument-restarts-automated-slewing/",
-"https://www.nustar.caltech.edu/news/nustar261002"
+"https://www.nustar.caltech.edu/news/nustar261002",
+"https://www.nustar.caltech.edu/news/nustar261009"
 ],
 "press": [
 "https://www.isas.jaxa.jp/topics/004288.html",
@@ -303,7 +304,11 @@
 "45907",
 "45906",
 "45905",
-"45904"
+"45904",
+"45927",
+"45926",
+"45925",
+"45924"
 ],
 "atel": [
 "17872",
@@ -514,16 +519,10 @@
 "18096",
 "18098",
 "18099",
-"18100"
+"18100",
+"18102"
 ],
 "arxiv": [
-"2609.00265",
-"2609.00200",
-"2609.00166",
-"2609.00147",
-"2609.00128",
-"2609.00130",
-"2609.02681",
 "2609.02058",
 "2609.02667",
 "2609.01898",
@@ -1516,7 +1515,14 @@
 "2610.13223",
 "2610.13206",
 "2610.13011",
-"2610.12923"
+"2610.12923",
+"2610.12974",
+"2610.13926",
+"2610.13492",
+"2610.12807",
+"2610.12600",
+"2610.12632",
+"2610.13496"
 ],
 "arxiv_last_checked_date": "2026-07-06",
 "tns": [
